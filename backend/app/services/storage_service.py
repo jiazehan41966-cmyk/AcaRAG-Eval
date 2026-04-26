@@ -13,6 +13,7 @@ class LocalStateStore:
         self.documents_path: Path = settings.state_dir / "documents.json"
         self.chunks_path: Path = settings.state_dir / "chunks.json"
         self.index_path: Path = settings.state_dir / "index.json"
+        self.eval_runs_path: Path = settings.state_dir / "eval_runs.json"
         self._lock = Lock()
         self._ensure_files()
 
@@ -21,6 +22,7 @@ class LocalStateStore:
             (self.documents_path, {}),
             (self.chunks_path, {}),
             (self.index_path, {"chunk_vectors": {}, "bm25": {}}),
+            (self.eval_runs_path, {}),
         ):
             if not path.exists():
                 path.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -77,6 +79,16 @@ class LocalStateStore:
 
     def load_index(self) -> dict[str, Any]:
         return self._read_json(self.index_path, {"chunk_vectors": {}, "bm25": {}})
+
+    def save_eval_run(self, run_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            runs = self._read_json(self.eval_runs_path, {})
+            runs[run_id] = payload
+            self._write_json(self.eval_runs_path, runs)
+
+    def get_eval_run(self, run_id: str) -> dict[str, Any] | None:
+        runs = self._read_json(self.eval_runs_path, {})
+        return runs.get(run_id)
 
 
 state_store = LocalStateStore()

@@ -30,7 +30,7 @@ def bm25_search(request: QueryRequest):
 
 @router.post("/search/hybrid", response_model=SearchResponse)
 def hybrid_search(request: QueryRequest):
-    hits = index_service.hybrid_search(request.query, request.top_k)
+    hits = index_service.hybrid_search(request.query, request.top_k, alpha=request.alpha)
     return SearchResponse(query=request.query, strategy="hybrid", hits=hits)
 
 

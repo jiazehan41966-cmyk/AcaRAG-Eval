@@ -16,16 +16,46 @@ class Settings(BaseSettings):
     parsed_dir: Path = Path("data/parsed")
     index_dir: Path = Path("data/index")
     state_dir: Path = Path("data/state")
+    golden_set_dir: Path = Path("data/golden_set")
+    eval_reports_dir: Path = Path("data/eval_reports")
 
     default_chunk_size: int = 600
     default_chunk_overlap: int = 120
     default_top_k: int = 5
     embedding_dim: int = 384
 
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
+    qdrant_collection: str = "paper_chunks"
+    qdrant_prefer_grpc: bool = False
+    qdrant_fallback_local: bool = True
+    qdrant_local_path: Path = Path("data/index/qdrant_local")
+
+    embedding_model_name: str = "BAAI/bge-small-zh-v1.5"
+    reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    force_mock_embedding: bool = False
+
+    llm_provider: str = "none"
+    llm_model_name: str = "gpt-4o-mini"
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+
+    default_golden_set_path: Path = Path("data/golden_set/golden_set.jsonl")
+    enable_ragas: bool = False
+
     allowed_extensions: tuple[str, ...] = (".pdf", ".md", ".txt")
 
     def ensure_dirs(self) -> None:
-        for path in (self.data_dir, self.raw_dir, self.parsed_dir, self.index_dir, self.state_dir):
+        for path in (
+            self.data_dir,
+            self.raw_dir,
+            self.parsed_dir,
+            self.index_dir,
+            self.state_dir,
+            self.golden_set_dir,
+            self.eval_reports_dir,
+            self.qdrant_local_path,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
 

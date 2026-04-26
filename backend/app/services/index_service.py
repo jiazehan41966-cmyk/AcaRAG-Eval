@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from app.models.document import ChunkRecord
+from app.services.bge_service import bge_model_service
 from app.services.embedding_service import embedding_service
+from app.services.qdrant_service import qdrant_service
 from app.services.storage_service import state_store
 
 
@@ -39,6 +42,9 @@ class IndexService:
             "b": 0.75,
         }
 
+    def _load_chunk_vectors(self) -> dict[str, dict]:
+        return state_store.load_index().get("chunk_vectors", {})
+
     def build_index(self, doc_ids: list[str] | None = None) -> dict:
         existing = state_store.load_index()
         chunk_vectors: dict[str, dict] = existing.get("chunk_vectors", {})
@@ -46,27 +52,41 @@ class IndexService:
         selected_chunks = state_store.list_chunks(doc_ids)
         selected_doc_ids = set(doc_ids) if doc_ids else None
 
+        if not selected_chunks:
+            raise HTTPException(status_code=400, detail="No parsed chunks found. Parse documents first.")
+
         if selected_doc_ids is None:
             chunk_vectors = {}
+            # full rebuild: clear qdrant collection after vector dimension is known
         else:
-            # Remove old vectors for documents that will be re-indexed.
             chunk_vectors = {
                 cid: payload
                 for cid, payload in chunk_vectors.items()
                 if payload.get("doc_id") not in selected_doc_ids
             }
+            qdrant_service.delete_by_doc_ids(list(selected_doc_ids))
 
-        if not selected_chunks:
-            raise HTTPException(status_code=400, detail="No parsed chunks found. Parse documents first.")
+        texts = [chunk.text for chunk in selected_chunks]
+        vectors = bge_model_service.embed_batch(texts)
+        if not vectors:
+            raise HTTPException(status_code=500, detail="Failed to compute embeddings")
 
-        for chunk in selected_chunks:
+        vector_size = len(vectors[0])
+        if selected_doc_ids is None:
+            qdrant_service.clear_collection(vector_size)
+        else:
+            qdrant_service.ensure_collection(vector_size)
+
+        qdrant_service.upsert_chunks(selected_chunks, vectors)
+
+        for chunk, vector in zip(selected_chunks, vectors):
             chunk_vectors[chunk.id] = {
                 "doc_id": chunk.doc_id,
                 "text": chunk.text,
                 "section": chunk.section,
                 "page": chunk.page,
                 "metadata": chunk.metadata,
-                "vector": embedding_service.embed(chunk.text),
+                "vector": vector,
             }
 
         bm25 = self._build_bm25(chunk_vectors)
@@ -75,6 +95,8 @@ class IndexService:
             "chunk_vectors": chunk_vectors,
             "bm25": bm25,
             "built_at": datetime.now(timezone.utc).isoformat(),
+            "embedding": bge_model_service.health(),
+            "qdrant": qdrant_service.health(),
         }
         state_store.save_index(payload)
 
@@ -82,6 +104,9 @@ class IndexService:
             "indexed_chunks": len(chunk_vectors),
             "indexed_docs": len({entry["doc_id"] for entry in chunk_vectors.values()}),
             "built_at": payload["built_at"],
+            "embedding_backend": payload["embedding"]["embedding_backend"],
+            "reranker_backend": payload["embedding"]["reranker_backend"],
+            "qdrant_mode": payload["qdrant"]["mode"],
         }
 
     def rebuild_index(self, doc_ids: list[str] | None = None) -> dict:
@@ -132,10 +157,17 @@ class IndexService:
         if not chunk_vectors:
             raise HTTPException(status_code=400, detail="Index is empty. Build index first.")
 
-        query_vec = embedding_service.embed(query)
+        query_vector = bge_model_service.embed(query)
+
+        # Primary path: real vector retrieval via Qdrant.
+        hits = qdrant_service.vector_search(query_vector=query_vector, top_k=top_k)
+        if hits:
+            return hits
+
+        # Fallback path: local cosine retrieval.
         scores = []
         for chunk_id, payload in chunk_vectors.items():
-            score = embedding_service.cosine_similarity(query_vec, payload.get("vector", []))
+            score = embedding_service.cosine_similarity(query_vector, payload.get("vector", []))
             scores.append((chunk_id, score, payload))
 
         scores.sort(key=lambda item: item[1], reverse=True)
@@ -154,9 +186,11 @@ class IndexService:
         max_vector = max(vector_scores.values(), default=1.0) or 1.0
         max_bm25 = max(bm25_scores.values(), default=1.0) or 1.0
 
-        index = state_store.load_index().get("chunk_vectors", {})
+        index = self._load_chunk_vectors()
 
         for chunk_id in all_chunk_ids:
+            if chunk_id not in index:
+                continue
             v = vector_scores.get(chunk_id, 0.0) / max_vector
             b = bm25_scores.get(chunk_id, 0.0) / max_bm25
             merged_score = alpha * v + (1 - alpha) * b
@@ -166,25 +200,22 @@ class IndexService:
         return [self._to_hit(chunk_id, score, index[chunk_id]) for chunk_id, score in merged[:top_k]]
 
     def rerank(self, query: str, candidates: list[str], top_k: int = 5) -> list[dict]:
-        query_tokens = set(self.tokenize(query))
-        ranked: list[tuple[str, float]] = []
+        return bge_model_service.rerank(query=query, documents=candidates, top_k=top_k)
 
-        for candidate in candidates:
-            candidate_tokens = set(self.tokenize(candidate))
-            overlap = len(query_tokens & candidate_tokens)
-            union = len(query_tokens | candidate_tokens) or 1
-            score = overlap / union
-            ranked.append((candidate, score))
+    def rerank_hits(self, query: str, hits: list[dict], top_k: int = 5) -> list[dict]:
+        if not hits:
+            return []
+        ranked = bge_model_service.rerank(query=query, documents=[item["text"] for item in hits], top_k=top_k)
+        score_by_text = {item["text"]: item["score"] for item in ranked}
 
-        ranked.sort(key=lambda x: x[1], reverse=True)
-        return [
-            {
-                "text": text,
-                "score": score,
-                "rank": rank + 1,
-            }
-            for rank, (text, score) in enumerate(ranked[:top_k])
-        ]
+        merged = []
+        for hit in hits:
+            if hit["text"] not in score_by_text:
+                continue
+            merged.append({**hit, "rerank_score": score_by_text[hit["text"]]})
+
+        merged.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+        return merged[:top_k]
 
     def _to_hit(self, chunk_id: str, score: float, payload: dict) -> dict:
         return {

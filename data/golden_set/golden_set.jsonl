@@ -1,0 +1,2 @@
+﻿{"question":"论文提出了什么核心方法？","ground_truth":"论文提出了一个结合稠密检索和稀疏检索的混合检索框架，并通过重排提升回答可信度。","supporting_evidence":[],"expected_citation":[],"difficulty":"easy","question_type":"fact","failure_label":""}
+{"question":"该方法在实验上有什么效果？","ground_truth":"实验显示在回答相关性和faithfulness上有提升，同时延迟可控。","supporting_evidence":[],"expected_citation":[],"difficulty":"medium","question_type":"fact","failure_label":""}

@@ -15,7 +15,9 @@ data/raw/*
 data/parsed/*
 data/index/*
 data/state/*.json
+data/eval_reports/*
 !data/raw/.gitkeep
 !data/parsed/.gitkeep
 !data/index/.gitkeep
 !data/state/.gitkeep
+!data/eval_reports/.gitkeep

@@ -1,36 +1,47 @@
 ﻿# 面向学术论文知识生产的 Agentic RAG 自动化评测平台
 
-这是项目的第一阶段可运行版本（MVP），目标是先跑通闭环：
+当前版本已实现三条主线：
 
-- 文档上传（PDF / Markdown / TXT）
-- 文档解析与 chunk 切分
-- 索引构建（vector / BM25 / hybrid）
-- 检索接口与 rerank 接口
-- 最小 Agentic RAG 问答流程（router -> retrieve -> generate -> faithfulness check）
+- 真实向量检索：`Qdrant + BGE embedding + BGE reranker`
+- Agent 编排：`LangGraph` 状态图（router/rewrite/retrieve/grade/generate/check）
+- 自动化评测闭环：`Golden Set + RAGAS(可选) + Markdown 报告导出`
 
-> 当前版本为了快速启动，使用本地轻量实现（哈希 embedding + 本地 BM25）。后续可平滑替换为 Qdrant + BGE + LangGraph + RAGAS/DeepEval。
+## 核心能力
 
-## 目录结构
+### 1) 数据接入
 
-```text
-backend/
-  app/
-    api/
-    core/
-    models/
-    schemas/
-    services/
-    workflows/
-mcp_servers/
-frontend/
-data/
-docker-compose.yml
-requirements.txt
-```
+- 上传 `PDF/Markdown/TXT`
+- 解析与 chunk 切分
+- 元数据提取与持久化
+
+### 2) 知识索引
+
+- 向量索引：Qdrant collection `paper_chunks`
+- 稀疏索引：本地 BM25
+- Hybrid Search：向量 + BM25 融合
+- Rerank：BGE Cross-Encoder（不可用时自动降级）
+
+### 3) Agentic RAG
+
+LangGraph 节点：
+
+- `classify_question`
+- `rewrite_query`
+- `retrieve_docs`
+- `grade_documents`
+- `generate_answer`
+- `check_faithfulness`
+- `call_mcp_tool`（当前为占位实现）
+
+### 4) 自动化评测
+
+- 读取 Golden Set（默认 `data/golden_set/golden_set.jsonl`）
+- 批量执行问答
+- 输出 summary metrics（faithfulness/answer_relevancy/context_recall/citation_accuracy）
+- 可选执行 RAGAS
+- 导出 Markdown 报告到 `data/eval_reports/<run_id>.md`
 
 ## 快速启动
-
-### 1) 本地运行
 
 ```bash
 python -m venv .venv
@@ -41,35 +52,40 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-打开文档：
+文档地址：
 
 - Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health: [http://localhost:8000/health](http://localhost:8000/health)
 
-### 2) Docker Compose 运行
+## 关键环境变量
 
-```bash
-docker compose up --build
+```env
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION=paper_chunks
+QDRANT_FALLBACK_LOCAL=true
+
+EMBEDDING_MODEL_NAME=BAAI/bge-small-zh-v1.5
+RERANKER_MODEL_NAME=BAAI/bge-reranker-base
+FORCE_MOCK_EMBEDDING=false
+
+LLM_PROVIDER=none
+OPENAI_API_KEY=
+
+DEFAULT_GOLDEN_SET_PATH=data/golden_set/golden_set.jsonl
+ENABLE_RAGAS=false
 ```
 
-### 3) 运行测试
+说明：
 
-```bash
-pytest
-```
+- 若 `QDRANT_URL` 不可达且 `QDRANT_FALLBACK_LOCAL=true`，会自动回退到本地 Qdrant。
+- 若未配置 OpenAI 或模型不可用，会自动使用启发式 rewrite/generate/rerank 兜底。
 
-## 已实现接口
+## 接口
 
-### 文档接入层
+### 文档与索引
 
 - `POST /api/documents/upload`
-- `GET /api/documents/{doc_id}`
 - `POST /api/documents/{doc_id}/parse`
-- `GET /api/documents/{doc_id}/chunks`
-- `GET /api/documents/{doc_id}/metadata`
-
-### 知识索引层
-
 - `POST /api/index/build`
 - `POST /api/index/rebuild`
 - `POST /api/search/vector`
@@ -77,67 +93,28 @@ pytest
 - `POST /api/search/hybrid`
 - `POST /api/search/rerank`
 
-### Agentic RAG 工作流层（MVP）
+### Agent 与评测
 
 - `POST /api/chat/ask`
-
-### 自动化评测层（占位）
-
 - `POST /api/eval/run`
 - `GET /api/eval/runs/{run_id}`
 
-### 可观测性层（占位）
-
-- `GET /api/traces/{trace_id}`
-
-## 示例调用
-
-### 1) 上传文档
+## 示例：运行评测
 
 ```bash
-curl -X POST "http://localhost:8000/api/documents/upload" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@./example.md"
-```
-
-### 2) 解析文档
-
-```bash
-curl -X POST "http://localhost:8000/api/documents/{doc_id}/parse" \
+curl -X POST "http://localhost:8000/api/eval/run" \
   -H "Content-Type: application/json" \
-  -d '{"chunk_size": 600, "chunk_overlap": 120}'
+  -d '{
+    "run_name": "baseline_eval",
+    "top_k": 5,
+    "run_ragas": false
+  }'
 ```
 
-### 3) 构建索引
+返回 `report_path` 后可直接打开对应 Markdown 报告。
+
+## 测试
 
 ```bash
-curl -X POST "http://localhost:8000/api/index/build" \
-  -H "Content-Type: application/json" \
-  -d '{}'
+pytest
 ```
-
-### 4) 混合检索
-
-```bash
-curl -X POST "http://localhost:8000/api/search/hybrid" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"这篇论文的方法和实验设置是什么？","top_k":5}'
-```
-
-### 5) Agentic RAG 问答
-
-```bash
-curl -X POST "http://localhost:8000/api/chat/ask" \
-  -H "Content-Type: application/json" \
-  -d '{"question":"请总结该论文的核心贡献","top_k":5}'
-```
-
-## 下一阶段计划
-
-1. 接入 Qdrant 与真实 Embedding/Reranker（BGE 系列）
-2. 用 LangGraph 替换当前轻量 Agent 工作流
-3. 增加 Query Rewrite、文档相关性评分与二次检索
-4. 接入 RAGAS + DeepEval 批量评测与报告导出
-5. 接入 Langfuse trace 与 token/cost 统计
-6. 完成 `paper-eval-mcp-server` 的 MCP 工具能力
