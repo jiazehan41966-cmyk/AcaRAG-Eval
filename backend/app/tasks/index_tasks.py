@@ -1,0 +1,1 @@
+﻿"""Celery index task placeholder."""

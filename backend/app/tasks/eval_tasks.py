@@ -1,0 +1,1 @@
+﻿"""Celery evaluation task placeholder."""

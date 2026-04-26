@@ -1,0 +1,48 @@
+﻿version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: paper-rag-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - qdrant
+      - redis
+      - postgres
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    container_name: paper-rag-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: paper-rag-redis
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: paper-rag-postgres
+    environment:
+      POSTGRES_USER: paper_rag
+      POSTGRES_PASSWORD: paper_rag
+      POSTGRES_DB: paper_rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_storage:/var/lib/postgresql/data
+
+volumes:
+  qdrant_storage:
+  pg_storage:
