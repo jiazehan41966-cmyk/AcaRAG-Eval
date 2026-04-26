@@ -8,7 +8,7 @@ def _append_trace(state: dict, step: dict) -> None:
 def run(state: dict) -> dict:
     question = state.get("question", "")
     q = question.lower()
-    metadata_keywords = ["作者", "年份", "venue", "引用", "citation", "metadata", "paper id"]
+    metadata_keywords = ["作者", "年份", "venue", "引用", "citation", "metadata", "paper id", "doc_id"]
     compare_keywords = ["对比", "比较", "区别", "difference", "versus", "相比", "优于"]
 
     if any(keyword in q for keyword in metadata_keywords):

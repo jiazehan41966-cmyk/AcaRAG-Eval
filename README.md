@@ -1,45 +1,15 @@
 ﻿# 面向学术论文知识生产的 Agentic RAG 自动化评测平台
 
-当前版本已实现三条主线：
+当前版本已经具备完整的研发闭环：
 
-- 真实向量检索：`Qdrant + BGE embedding + BGE reranker`
-- Agent 编排：`LangGraph` 状态图（router/rewrite/retrieve/grade/generate/check）
-- 自动化评测闭环：`Golden Set + RAGAS(可选) + Markdown 报告导出`
-
-## 核心能力
-
-### 1) 数据接入
-
-- 上传 `PDF/Markdown/TXT`
-- 解析与 chunk 切分
-- 元数据提取与持久化
-
-### 2) 知识索引
-
-- 向量索引：Qdrant collection `paper_chunks`
-- 稀疏索引：本地 BM25
-- Hybrid Search：向量 + BM25 融合
-- Rerank：BGE Cross-Encoder（不可用时自动降级）
-
-### 3) Agentic RAG
-
-LangGraph 节点：
-
-- `classify_question`
-- `rewrite_query`
-- `retrieve_docs`
-- `grade_documents`
-- `generate_answer`
-- `check_faithfulness`
-- `call_mcp_tool`（当前为占位实现）
-
-### 4) 自动化评测
-
-- 读取 Golden Set（默认 `data/golden_set/golden_set.jsonl`）
-- 批量执行问答
-- 输出 summary metrics（faithfulness/answer_relevancy/context_recall/citation_accuracy）
-- 可选执行 RAGAS
-- 导出 Markdown 报告到 `data/eval_reports/<run_id>.md`
+- 文档接入：PDF/Markdown/TXT 上传、解析、chunk 化
+- 检索链路：Qdrant + BGE embedding + BM25 + Hybrid + Rerank
+- Agent 编排：LangGraph（router/rewrite/retrieve/grade/generate/check）
+- 工具访问：`paper-eval-mcp-server` 真实工具调用
+- 自动评测：Heuristic + RAGAS + DeepEval 双通道
+- 回归机制：baseline 保存、diff 对比、regression markdown
+- 可观测：Langfuse（可选）+ 本地 trace 存储
+- 前端页：`/ui/evaluation` 最小评测看板
 
 ## 快速启动
 
@@ -52,9 +22,10 @@ cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-文档地址：
+入口：
 
 - Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Eval UI: [http://localhost:8000/ui/evaluation](http://localhost:8000/ui/evaluation)
 - Health: [http://localhost:8000/health](http://localhost:8000/health)
 
 ## 关键环境变量
@@ -66,55 +37,91 @@ QDRANT_FALLBACK_LOCAL=true
 
 EMBEDDING_MODEL_NAME=BAAI/bge-small-zh-v1.5
 RERANKER_MODEL_NAME=BAAI/bge-reranker-base
-FORCE_MOCK_EMBEDDING=false
 
 LLM_PROVIDER=none
 OPENAI_API_KEY=
 
-DEFAULT_GOLDEN_SET_PATH=data/golden_set/golden_set.jsonl
 ENABLE_RAGAS=false
+ENABLE_DEEPEVAL=false
+
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
 说明：
 
-- 若 `QDRANT_URL` 不可达且 `QDRANT_FALLBACK_LOCAL=true`，会自动回退到本地 Qdrant。
-- 若未配置 OpenAI 或模型不可用，会自动使用启发式 rewrite/generate/rerank 兜底。
+- Qdrant 不可达时可回退本地 Qdrant（`QDRANT_FALLBACK_LOCAL=true`）。
+- 未配置 OpenAI 时，LLM 节点会自动使用启发式兜底，服务仍可运行。
+- RAGAS/DeepEval 默认关闭，按需在请求里开启。
 
-## 接口
+## API
 
-### 文档与索引
+### 文档与检索
 
 - `POST /api/documents/upload`
 - `POST /api/documents/{doc_id}/parse`
 - `POST /api/index/build`
-- `POST /api/index/rebuild`
 - `POST /api/search/vector`
 - `POST /api/search/bm25`
 - `POST /api/search/hybrid`
 - `POST /api/search/rerank`
 
-### Agent 与评测
+### Agent
 
 - `POST /api/chat/ask`
+
+### 评测
+
 - `POST /api/eval/run`
+- `GET /api/eval/runs`
 - `GET /api/eval/runs/{run_id}`
 
-## 示例：运行评测
+### Trace
+
+- `GET /api/traces`
+- `GET /api/traces/{trace_id}`
+
+## 评测请求示例
 
 ```bash
 curl -X POST "http://localhost:8000/api/eval/run" \
   -H "Content-Type: application/json" \
   -d '{
-    "run_name": "baseline_eval",
+    "run_name": "baseline_v1",
     "top_k": 5,
-    "run_ragas": false
+    "run_ragas": true,
+    "run_deepeval": true,
+    "set_as_baseline": true,
+    "baseline_name": "paper_qa_main"
   }'
 ```
 
-返回 `report_path` 后可直接打开对应 Markdown 报告。
-
-## 测试
+再次回归对比：
 
 ```bash
-pytest
+curl -X POST "http://localhost:8000/api/eval/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_name": "experiment_v2",
+    "top_k": 5,
+    "baseline_name": "paper_qa_main",
+    "compare_with_baseline": true
+  }'
+```
+
+## CI
+
+已提供 GitHub Actions：
+
+- `ruff check`
+- `pytest`
+- 可选 `eval smoke`（通过环境变量 `CI_RUN_EVAL_SMOKE=true` 开启）
+
+工作流文件：`.github/workflows/ci.yml`
+
+## 本地测试
+
+```bash
+pytest -q
 ```

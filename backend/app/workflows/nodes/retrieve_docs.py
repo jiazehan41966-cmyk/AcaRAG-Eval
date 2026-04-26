@@ -22,8 +22,26 @@ def run(state: dict) -> dict:
         error = str(exc)
 
     attempts = int(state.get("retrieve_attempts", 0)) + 1
+    latency_ms = round((time.perf_counter() - start) * 1000, 2)
+
     state["retrieve_attempts"] = attempts
     state["hits"] = hits
+    state.setdefault("retrieved_docs", []).append(
+        {
+            "attempt": attempts,
+            "query": query,
+            "latency_ms": latency_ms,
+            "hits": [
+                {
+                    "chunk_id": item.get("chunk_id"),
+                    "doc_id": item.get("doc_id"),
+                    "score": item.get("score"),
+                    "section": item.get("section"),
+                }
+                for item in hits
+            ],
+        }
+    )
 
     _append_trace(
         state,
@@ -32,7 +50,7 @@ def run(state: dict) -> dict:
             "query": query,
             "attempt": attempts,
             "hit_count": len(hits),
-            "latency_ms": round((time.perf_counter() - start) * 1000, 2),
+            "latency_ms": latency_ms,
             "error": error,
         },
     )

@@ -16,7 +16,7 @@ def run(state: dict) -> dict:
     route = state.get("route", "hybrid_rag")
     hits = list(state.get("hits", []))
 
-    answer = llm_service.generate_answer(question=question, route=route, contexts=hits)
+    answer, meta = llm_service.generate_answer(question=question, route=route, contexts=hits)
     citations = [
         {
             "chunk_id": item.get("chunk_id"),
@@ -32,14 +32,34 @@ def run(state: dict) -> dict:
 
     state["answer"] = answer
     state["citations"] = citations
+    state.setdefault("prompt_logs", []).append(
+        {
+            "node": "generate_answer",
+            "prompt": meta.get("prompt"),
+            "input": meta.get("input"),
+            "output": answer,
+            "model": meta.get("model"),
+            "source": meta.get("source"),
+        }
+    )
+    state["token_usage"] = {
+        "prompt_tokens": int(state.get("token_usage", {}).get("prompt_tokens", 0)) + int(meta.get("prompt_tokens", 0)),
+        "completion_tokens": int(state.get("token_usage", {}).get("completion_tokens", 0))
+        + int(meta.get("completion_tokens", 0)),
+        "total_tokens": int(state.get("token_usage", {}).get("total_tokens", 0)) + int(meta.get("total_tokens", 0)),
+        "token_cost": float(state.get("token_usage", {}).get("token_cost", 0.0)) + float(meta.get("token_cost", 0.0)),
+    }
 
     _append_trace(
         state,
         {
             "node": "generate_answer",
-            "source": "llm" if llm_service.is_enabled() else "heuristic",
+            "source": meta.get("source", "unknown"),
             "chars": len(answer),
             "citations": len(citations),
+            "prompt_tokens": meta.get("prompt_tokens", 0),
+            "completion_tokens": meta.get("completion_tokens", 0),
+            "token_cost": meta.get("token_cost", 0.0),
         },
     )
     return state

@@ -1,0 +1,199 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AcaRAG Eval Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f7f2;
+      --panel: #ffffff;
+      --accent: #1f6f50;
+      --text: #11221a;
+      --muted: #51635b;
+      --line: #d6dfda;
+      --warn: #b95c00;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 20% 10%, #e7f2ea 0%, var(--bg) 35%, #edf3ef 100%);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px 32px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 16px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 8px 20px rgba(17, 34, 26, 0.04);
+    }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    h2 { font-size: 16px; margin: 0 0 10px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover { background: #f7fbf8; cursor: pointer; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #e6f4ed;
+      color: var(--accent);
+    }
+    .warn { color: var(--warn); }
+    .kv { font-size: 13px; line-height: 1.6; }
+    .kv code { background: #eef3ef; padding: 2px 5px; border-radius: 6px; }
+    .links a { color: var(--accent); text-decoration: none; margin-right: 10px; }
+    .list { margin: 8px 0 0; padding-left: 16px; font-size: 13px; }
+    .list li { margin: 4px 0; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .metric {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      font-size: 13px;
+    }
+    @media (max-width: 980px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <h1>评测运行列表</h1>
+      <div class="sub">展示 run 列表、核心指标、报告链接。点击任意行查看失败样例。</div>
+      <button id="refreshBtn">刷新</button>
+      <div style="overflow:auto; margin-top:10px;">
+        <table id="runsTable">
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>时间</th>
+              <th>Blended</th>
+              <th>Failure Rate</th>
+              <th>报告</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>运行详情</h2>
+      <div id="detail" class="kv">选择左侧运行后显示详情。</div>
+    </section>
+  </div>
+
+  <script>
+    const tableBody = document.querySelector('#runsTable tbody');
+    const detailEl = document.getElementById('detail');
+    const refreshBtn = document.getElementById('refreshBtn');
+
+    function toReportLink(path) {
+      if (!path) return '';
+      const file = path.split('\\').pop().split('/').pop();
+      return `/reports/${file}`;
+    }
+
+    function fmt(v) {
+      return (typeof v === 'number') ? v.toFixed(4) : '-';
+    }
+
+    async function loadRuns() {
+      tableBody.innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
+      try {
+        const res = await fetch('/api/eval/runs');
+        const runs = await res.json();
+        if (!Array.isArray(runs) || runs.length === 0) {
+          tableBody.innerHTML = '<tr><td colspan="5">暂无评测运行</td></tr>';
+          detailEl.innerHTML = '请先调用 <code>/api/eval/run</code> 生成评测运行。';
+          return;
+        }
+
+        tableBody.innerHTML = '';
+        runs.forEach(run => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><b>${run.run_name}</b><br/><span class="pill">${run.run_id.slice(0, 8)}</span></td>
+            <td>${run.created_at}</td>
+            <td>${fmt(run.channels?.blended_overall)}</td>
+            <td class="${(run.failure_summary?.failure_rate || 0) > 0.4 ? 'warn' : ''}">${fmt(run.failure_summary?.failure_rate)}</td>
+            <td class="links"><a href="${toReportLink(run.report_path)}" target="_blank">report</a>${run.regression_report_path ? `<a href="${toReportLink(run.regression_report_path)}" target="_blank">regression</a>` : ''}</td>
+          `;
+          tr.addEventListener('click', () => loadRunDetail(run.run_id));
+          tableBody.appendChild(tr);
+        });
+
+        await loadRunDetail(runs[0].run_id);
+      } catch (err) {
+        tableBody.innerHTML = `<tr><td colspan="5">加载失败：${String(err)}</td></tr>`;
+      }
+    }
+
+    async function loadRunDetail(runId) {
+      detailEl.innerHTML = '详情加载中...';
+      try {
+        const res = await fetch(`/api/eval/runs/${runId}`);
+        const run = await res.json();
+
+        const failures = (run.results || []).filter(x => x.failure_type && x.failure_type !== 'none').slice(0, 8);
+        const failureList = failures.length
+          ? `<ul class="list">${failures.map(f => `<li><b>${f.failure_type}</b> | ${f.question} | score=${f.failure_score}</li>`).join('')}</ul>`
+          : '<div>无失败样例。</div>';
+
+        detailEl.innerHTML = `
+          <div><b>${run.run_name}</b> <span class="pill">${run.run_id}</span></div>
+          <div>status: <code>${run.status}</code> | baseline: <code>${run.baseline_name || '-'}</code></div>
+          <div class="metrics">
+            <div class="metric">Faithfulness: <b>${fmt(run.metrics?.faithfulness)}</b></div>
+            <div class="metric">Answer Relevancy: <b>${fmt(run.metrics?.answer_relevancy)}</b></div>
+            <div class="metric">Context Recall: <b>${fmt(run.metrics?.context_recall)}</b></div>
+            <div class="metric">Citation Accuracy: <b>${fmt(run.metrics?.citation_accuracy)}</b></div>
+            <div class="metric">RAGAS Overall: <b>${fmt(run.channels?.ragas?.overall_score)}</b></div>
+            <div class="metric">DeepEval Overall: <b>${fmt(run.channels?.deepeval?.overall_score)}</b></div>
+          </div>
+          <h2 style="margin-top:12px;">失败样例</h2>
+          ${failureList}
+          <h2 style="margin-top:12px;">报告</h2>
+          <div class="links">
+            <a href="${toReportLink(run.report_path)}" target="_blank">打开评测报告</a>
+            ${run.regression_report_path ? `<a href="${toReportLink(run.regression_report_path)}" target="_blank">打开回归报告</a>` : ''}
+          </div>
+        `;
+      } catch (err) {
+        detailEl.innerHTML = `详情加载失败：${String(err)}`;
+      }
+    }
+
+    refreshBtn.addEventListener('click', loadRuns);
+    loadRuns();
+  </script>
+</body>
+</html>

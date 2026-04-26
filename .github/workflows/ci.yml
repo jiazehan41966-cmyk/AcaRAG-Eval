@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CI_RUN_EVAL_SMOKE: "false"
+      FORCE_MOCK_EMBEDDING: "true"
+      QDRANT_FALLBACK_LOCAL: "true"
+      ENABLE_RAGAS: "false"
+      ENABLE_DEEPEVAL: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check backend tests mcp_servers
+
+      - name: Test
+        run: pytest -q
+
+      - name: Eval smoke (optional)
+        if: env.CI_RUN_EVAL_SMOKE == 'true'
+        run: pytest -q tests/test_api_smoke.py::test_eval_pipeline

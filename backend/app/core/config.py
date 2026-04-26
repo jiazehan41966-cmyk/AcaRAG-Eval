@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     qdrant_local_path: Path = Path("data/index/qdrant_local")
 
     embedding_model_name: str = "BAAI/bge-small-zh-v1.5"
-    reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    reranker_model_name: str = "BAAI/bge-reranker-base"
     force_mock_embedding: bool = False
 
     llm_provider: str = "none"
@@ -42,6 +42,12 @@ class Settings(BaseSettings):
 
     default_golden_set_path: Path = Path("data/golden_set/golden_set.jsonl")
     enable_ragas: bool = False
+    enable_deepeval: bool = False
+
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_tracing_enabled: bool = True
 
     allowed_extensions: tuple[str, ...] = (".pdf", ".md", ".txt")
 

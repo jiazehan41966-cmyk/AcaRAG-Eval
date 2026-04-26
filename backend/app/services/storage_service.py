@@ -14,6 +14,8 @@ class LocalStateStore:
         self.chunks_path: Path = settings.state_dir / "chunks.json"
         self.index_path: Path = settings.state_dir / "index.json"
         self.eval_runs_path: Path = settings.state_dir / "eval_runs.json"
+        self.eval_baselines_path: Path = settings.state_dir / "eval_baselines.json"
+        self.traces_path: Path = settings.state_dir / "traces.json"
         self._lock = Lock()
         self._ensure_files()
 
@@ -23,6 +25,8 @@ class LocalStateStore:
             (self.chunks_path, {}),
             (self.index_path, {"chunk_vectors": {}, "bm25": {}}),
             (self.eval_runs_path, {}),
+            (self.eval_baselines_path, {}),
+            (self.traces_path, {}),
         ):
             if not path.exists():
                 path.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -89,6 +93,41 @@ class LocalStateStore:
     def get_eval_run(self, run_id: str) -> dict[str, Any] | None:
         runs = self._read_json(self.eval_runs_path, {})
         return runs.get(run_id)
+
+    def list_eval_runs(self) -> list[dict[str, Any]]:
+        runs = self._read_json(self.eval_runs_path, {})
+        items = list(runs.values())
+        items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return items
+
+    def save_baseline(self, baseline_name: str, run_id: str) -> None:
+        with self._lock:
+            baselines = self._read_json(self.eval_baselines_path, {})
+            baselines[baseline_name] = run_id
+            self._write_json(self.eval_baselines_path, baselines)
+
+    def get_baseline(self, baseline_name: str) -> str | None:
+        baselines = self._read_json(self.eval_baselines_path, {})
+        return baselines.get(baseline_name)
+
+    def list_baselines(self) -> dict[str, str]:
+        return self._read_json(self.eval_baselines_path, {})
+
+    def save_trace(self, trace_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            traces = self._read_json(self.traces_path, {})
+            traces[trace_id] = payload
+            self._write_json(self.traces_path, traces)
+
+    def get_trace(self, trace_id: str) -> dict[str, Any] | None:
+        traces = self._read_json(self.traces_path, {})
+        return traces.get(trace_id)
+
+    def list_traces(self, limit: int = 100) -> list[dict[str, Any]]:
+        traces = self._read_json(self.traces_path, {})
+        items = list(traces.values())
+        items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return items[:limit]
 
 
 state_store = LocalStateStore()

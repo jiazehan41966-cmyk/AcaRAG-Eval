@@ -10,6 +10,7 @@ class ChatResponse(BaseModel):
     question: str
     route: str
     answer: str
+    trace_id: str | None = None
     citations: list[dict]
     faithfulness: dict
     trace: dict
