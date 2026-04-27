@@ -12,10 +12,28 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    environment:
+      MCP_MODE: http
+      MCP_SERVER_URL: http://paper-eval-mcp:8765/mcp
     depends_on:
       - qdrant
       - redis
       - postgres
+      - paper-eval-mcp
+
+  paper-eval-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: paper-eval-mcp
+    command: ["python", "-m", "mcp_servers.paper_eval_server.server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8765", "--path", "/mcp"]
+    working_dir: /app
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8765:8765"
 
   qdrant:
     image: qdrant/qdrant:v1.15.5

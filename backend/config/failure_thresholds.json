@@ -1,0 +1,7 @@
+{
+  "unsupported_claim_max_faithfulness": 0.45,
+  "citation_error_min_accuracy": 0.5,
+  "retrieval_miss_min_context_recall": 0.35,
+  "rerank_error_min_avg_score": 0.18,
+  "missing_reference_default_score": 1.0
+}

@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -9,6 +9,7 @@
       --bg: #f4f7f2;
       --panel: #ffffff;
       --accent: #1f6f50;
+      --accent-soft: #e4f3ec;
       --text: #11221a;
       --muted: #51635b;
       --line: #d6dfda;
@@ -22,23 +23,34 @@
       background: radial-gradient(circle at 20% 10%, #e7f2ea 0%, var(--bg) 35%, #edf3ef 100%);
     }
     .wrap {
-      max-width: 1200px;
-      margin: 24px auto;
-      padding: 0 16px 32px;
+      max-width: 1320px;
+      margin: 20px auto;
+      padding: 0 14px 24px;
       display: grid;
       grid-template-columns: 1.1fr 1fr;
-      gap: 16px;
+      gap: 14px;
     }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 14px;
-      padding: 14px;
+      padding: 12px;
       box-shadow: 0 8px 20px rgba(17, 34, 26, 0.04);
     }
-    h1 { font-size: 22px; margin: 0 0 8px; }
-    h2 { font-size: 16px; margin: 0 0 10px; }
-    .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .row label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+    input[type="text"], input[type="number"] {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 120px;
+      font-size: 13px;
+      background: #fbfdfb;
+    }
+    .ck { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); padding-top: 18px; }
     button {
       border: 0;
       background: var(--accent);
@@ -48,10 +60,11 @@
       cursor: pointer;
       font-weight: 600;
     }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .btn-ghost { background: #dfece6; color: #194d38; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th, td {
       border-bottom: 1px solid var(--line);
-      padding: 8px 6px;
+      padding: 7px 5px;
       text-align: left;
       vertical-align: top;
     }
@@ -61,25 +74,45 @@
       display: inline-block;
       padding: 2px 8px;
       border-radius: 999px;
-      font-size: 12px;
-      background: #e6f4ed;
+      font-size: 11px;
+      background: var(--accent-soft);
       color: var(--accent);
     }
     .warn { color: var(--warn); }
-    .kv { font-size: 13px; line-height: 1.6; }
-    .kv code { background: #eef3ef; padding: 2px 5px; border-radius: 6px; }
+    .kv { font-size: 12px; line-height: 1.55; }
+    .kv code {
+      background: #eef3ef;
+      padding: 1px 4px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
     .links a { color: var(--accent); text-decoration: none; margin-right: 10px; }
-    .list { margin: 8px 0 0; padding-left: 16px; font-size: 13px; }
-    .list li { margin: 4px 0; }
-    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .list { margin: 8px 0 0; padding-left: 16px; font-size: 12px; }
+    .list li { margin: 3px 0; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
     .metric {
       border: 1px dashed var(--line);
       border-radius: 10px;
-      padding: 8px;
-      font-size: 13px;
+      padding: 7px;
+      font-size: 12px;
+      background: #fcfefd;
     }
-    @media (max-width: 980px) {
+    .status { font-size: 12px; padding: 8px; border-radius: 8px; background: #f2f7f4; margin-bottom: 10px; }
+    .status.error { background: #fff1e8; color: #9a3f00; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      min-height: 140px;
+      overflow: auto;
+      background: #fbfefc;
+    }
+    .mono { font-family: Consolas, "SFMono-Regular", Menlo, monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+    .tiny { font-size: 11px; color: var(--muted); }
+    @media (max-width: 1000px) {
       .wrap { grid-template-columns: 1fr; }
+      .split { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -87,9 +120,26 @@
   <div class="wrap">
     <section class="panel">
       <h1>评测运行列表</h1>
-      <div class="sub">展示 run 列表、核心指标、报告链接。点击任意行查看失败样例。</div>
-      <button id="refreshBtn">刷新</button>
-      <div style="overflow:auto; margin-top:10px;">
+      <div class="sub">支持手动触发评测、查看 run 指标、打开报告。</div>
+
+      <div id="runStatus" class="status">等待操作。</div>
+
+      <div class="row">
+        <label>run_name<input id="runName" type="text" value="manual_eval" /></label>
+        <label>top_k<input id="topK" type="number" value="5" min="1" max="20" /></label>
+        <label>baseline_name<input id="baselineName" type="text" value="paper_main" /></label>
+        <label>golden_set_path<input id="goldenSetPath" type="text" placeholder="可选：data/golden_set/golden_set.jsonl" style="min-width:280px;" /></label>
+      </div>
+      <div class="row">
+        <label class="ck"><input id="runRagas" type="checkbox" checked /> run_ragas</label>
+        <label class="ck"><input id="runDeepeval" type="checkbox" checked /> run_deepeval</label>
+        <label class="ck"><input id="setBaseline" type="checkbox" /> set_as_baseline</label>
+        <label class="ck"><input id="compareBaseline" type="checkbox" checked /> compare_with_baseline</label>
+        <button id="runEvalBtn">手动触发评测</button>
+        <button id="refreshBtn" class="btn-ghost">刷新列表</button>
+      </div>
+
+      <div style="overflow:auto; margin-top:8px;">
         <table id="runsTable">
           <thead>
             <tr>
@@ -106,15 +156,56 @@
     </section>
 
     <section class="panel">
-      <h2>运行详情</h2>
-      <div id="detail" class="kv">选择左侧运行后显示详情。</div>
+      <h2>运行详情与 Case 诊断</h2>
+      <div id="runDetail" class="kv">选择左侧运行后显示详情。</div>
+      <div style="margin-top:10px; overflow:auto; max-height:220px;">
+        <table id="casesTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>failure</th>
+              <th>question</th>
+              <th>trace</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="split" style="margin-top:10px;">
+        <div class="box">
+          <div class="tiny">Case 详情（含 citation）</div>
+          <div id="caseDetail" class="kv">点击上方 case 行查看。</div>
+        </div>
+        <div class="box">
+          <div class="tiny">Trace 详情（steps/tool calls）</div>
+          <div id="traceDetail" class="mono">点击 case 后自动加载 trace。</div>
+        </div>
+      </div>
     </section>
   </div>
 
   <script>
     const tableBody = document.querySelector('#runsTable tbody');
-    const detailEl = document.getElementById('detail');
+    const casesBody = document.querySelector('#casesTable tbody');
+    const runDetailEl = document.getElementById('runDetail');
+    const caseDetailEl = document.getElementById('caseDetail');
+    const traceDetailEl = document.getElementById('traceDetail');
+    const runStatusEl = document.getElementById('runStatus');
+
     const refreshBtn = document.getElementById('refreshBtn');
+    const runEvalBtn = document.getElementById('runEvalBtn');
+
+    const runNameEl = document.getElementById('runName');
+    const topKEl = document.getElementById('topK');
+    const baselineNameEl = document.getElementById('baselineName');
+    const goldenSetPathEl = document.getElementById('goldenSetPath');
+    const runRagasEl = document.getElementById('runRagas');
+    const runDeepevalEl = document.getElementById('runDeepeval');
+    const setBaselineEl = document.getElementById('setBaseline');
+    const compareBaselineEl = document.getElementById('compareBaseline');
+
+    let currentRun = null;
 
     function toReportLink(path) {
       if (!path) return '';
@@ -126,14 +217,60 @@
       return (typeof v === 'number') ? v.toFixed(4) : '-';
     }
 
-    async function loadRuns() {
+    function setStatus(text, error=false) {
+      runStatusEl.textContent = text;
+      runStatusEl.className = error ? 'status error' : 'status';
+    }
+
+    function quote(s) {
+      return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    async function triggerEval() {
+      const payload = {
+        run_name: runNameEl.value || `manual_eval_${Date.now()}`,
+        top_k: Number(topKEl.value || 5),
+        run_ragas: Boolean(runRagasEl.checked),
+        run_deepeval: Boolean(runDeepevalEl.checked),
+        baseline_name: baselineNameEl.value || null,
+        set_as_baseline: Boolean(setBaselineEl.checked),
+        compare_with_baseline: Boolean(compareBaselineEl.checked)
+      };
+      if (goldenSetPathEl.value && goldenSetPathEl.value.trim()) {
+        payload.golden_set_path = goldenSetPathEl.value.trim();
+      }
+
+      setStatus('评测触发中...');
+      runEvalBtn.disabled = true;
+      try {
+        const res = await fetch('/api/eval/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(`触发失败: ${JSON.stringify(data)}`, true);
+          return;
+        }
+        setStatus(`已完成: run_id=${data.run_id}，cases=${data.cases}`);
+        await loadRuns(data.run_id);
+      } catch (err) {
+        setStatus(`触发异常: ${String(err)}`, true);
+      } finally {
+        runEvalBtn.disabled = false;
+      }
+    }
+
+    async function loadRuns(preferRunId = null) {
       tableBody.innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
       try {
         const res = await fetch('/api/eval/runs');
         const runs = await res.json();
         if (!Array.isArray(runs) || runs.length === 0) {
           tableBody.innerHTML = '<tr><td colspan="5">暂无评测运行</td></tr>';
-          detailEl.innerHTML = '请先调用 <code>/api/eval/run</code> 生成评测运行。';
+          runDetailEl.innerHTML = '请先触发一次评测。';
+          casesBody.innerHTML = '<tr><td colspan="4">暂无 case</td></tr>';
           return;
         }
 
@@ -141,8 +278,8 @@
         runs.forEach(run => {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td><b>${run.run_name}</b><br/><span class="pill">${run.run_id.slice(0, 8)}</span></td>
-            <td>${run.created_at}</td>
+            <td><b>${quote(run.run_name)}</b><br/><span class="pill">${quote(run.run_id.slice(0, 8))}</span></td>
+            <td>${quote(run.created_at)}</td>
             <td>${fmt(run.channels?.blended_overall)}</td>
             <td class="${(run.failure_summary?.failure_rate || 0) > 0.4 ? 'warn' : ''}">${fmt(run.failure_summary?.failure_rate)}</td>
             <td class="links"><a href="${toReportLink(run.report_path)}" target="_blank">report</a>${run.regression_report_path ? `<a href="${toReportLink(run.regression_report_path)}" target="_blank">regression</a>` : ''}</td>
@@ -151,26 +288,27 @@
           tableBody.appendChild(tr);
         });
 
-        await loadRunDetail(runs[0].run_id);
+        const selected = preferRunId || runs[0].run_id;
+        await loadRunDetail(selected);
       } catch (err) {
-        tableBody.innerHTML = `<tr><td colspan="5">加载失败：${String(err)}</td></tr>`;
+        tableBody.innerHTML = `<tr><td colspan="5">加载失败：${quote(String(err))}</td></tr>`;
       }
     }
 
     async function loadRunDetail(runId) {
-      detailEl.innerHTML = '详情加载中...';
+      runDetailEl.innerHTML = '详情加载中...';
+      casesBody.innerHTML = '<tr><td colspan="4">加载中...</td></tr>';
+      caseDetailEl.innerHTML = '点击上方 case 行查看。';
+      traceDetailEl.textContent = '点击 case 后自动加载 trace。';
+
       try {
         const res = await fetch(`/api/eval/runs/${runId}`);
         const run = await res.json();
+        currentRun = run;
 
-        const failures = (run.results || []).filter(x => x.failure_type && x.failure_type !== 'none').slice(0, 8);
-        const failureList = failures.length
-          ? `<ul class="list">${failures.map(f => `<li><b>${f.failure_type}</b> | ${f.question} | score=${f.failure_score}</li>`).join('')}</ul>`
-          : '<div>无失败样例。</div>';
-
-        detailEl.innerHTML = `
-          <div><b>${run.run_name}</b> <span class="pill">${run.run_id}</span></div>
-          <div>status: <code>${run.status}</code> | baseline: <code>${run.baseline_name || '-'}</code></div>
+        runDetailEl.innerHTML = `
+          <div><b>${quote(run.run_name)}</b> <span class="pill">${quote(run.run_id)}</span></div>
+          <div>status: <code>${quote(run.status)}</code> | baseline: <code>${quote(run.baseline_name || '-')}</code></div>
           <div class="metrics">
             <div class="metric">Faithfulness: <b>${fmt(run.metrics?.faithfulness)}</b></div>
             <div class="metric">Answer Relevancy: <b>${fmt(run.metrics?.answer_relevancy)}</b></div>
@@ -179,20 +317,91 @@
             <div class="metric">RAGAS Overall: <b>${fmt(run.channels?.ragas?.overall_score)}</b></div>
             <div class="metric">DeepEval Overall: <b>${fmt(run.channels?.deepeval?.overall_score)}</b></div>
           </div>
-          <h2 style="margin-top:12px;">失败样例</h2>
-          ${failureList}
-          <h2 style="margin-top:12px;">报告</h2>
-          <div class="links">
+          <div style="margin-top:8px;" class="links">
             <a href="${toReportLink(run.report_path)}" target="_blank">打开评测报告</a>
             ${run.regression_report_path ? `<a href="${toReportLink(run.regression_report_path)}" target="_blank">打开回归报告</a>` : ''}
           </div>
         `;
+
+        const results = Array.isArray(run.results) ? run.results : [];
+        if (!results.length) {
+          casesBody.innerHTML = '<tr><td colspan="4">无 case 结果</td></tr>';
+          return;
+        }
+
+        casesBody.innerHTML = '';
+        results.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.idx ?? '-'}</td>
+            <td>${quote(item.failure_type || 'none')}</td>
+            <td>${quote((item.question || '').slice(0, 56))}</td>
+            <td>${quote((item.trace_id || '').slice(0, 8))}</td>
+          `;
+          tr.addEventListener('click', () => loadCaseDetail(item));
+          casesBody.appendChild(tr);
+        });
+
+        await loadCaseDetail(results[0]);
       } catch (err) {
-        detailEl.innerHTML = `详情加载失败：${String(err)}`;
+        runDetailEl.innerHTML = `详情加载失败：${quote(String(err))}`;
+        casesBody.innerHTML = '<tr><td colspan="4">加载失败</td></tr>';
       }
     }
 
-    refreshBtn.addEventListener('click', loadRuns);
+    function renderCitations(citations) {
+      if (!Array.isArray(citations) || !citations.length) {
+        return '<div>无 citations。</div>';
+      }
+      return `
+        <ul class="list">
+          ${citations.slice(0, 6).map(c => `<li>doc=${quote(c.doc_id)} | page=${quote(c.page)} | chunk=${quote(c.chunk_id)} | score=${fmt(c.rerank_score ?? c.score)}</li>`).join('')}
+        </ul>
+      `;
+    }
+
+    async function loadCaseDetail(item) {
+      if (!item) return;
+
+      caseDetailEl.innerHTML = `
+        <div><b>Case #${quote(item.idx)}</b> <span class="pill">${quote(item.failure_type || 'none')}</span></div>
+        <div>failure_score: <code>${quote(item.failure_score)}</code> | question_type: <code>${quote(item.question_type || '-')}</code></div>
+        <div style="margin-top:6px;"><b>Question</b>: ${quote(item.question || '')}</div>
+        <div style="margin-top:6px;"><b>Answer</b>: ${quote(item.answer || '')}</div>
+        <div style="margin-top:6px;"><b>Ground Truth</b>: ${quote(item.ground_truth || '')}</div>
+        <div style="margin-top:6px;"><b>Citations</b>:</div>
+        ${renderCitations(item.citations)}
+      `;
+
+      if (!item.trace_id) {
+        traceDetailEl.textContent = '该 case 无 trace_id。';
+        return;
+      }
+
+      traceDetailEl.textContent = 'trace 加载中...';
+      try {
+        const res = await fetch(`/api/traces/${item.trace_id}`);
+        const trace = await res.json();
+        const events = Array.isArray(trace.events) ? trace.events : [];
+        const compact = {
+          trace_id: trace.trace_id,
+          status: trace.status,
+          langfuse_url: trace.langfuse_url,
+          event_count: events.length,
+          events: events.slice(0, 12).map(e => ({
+            name: e.name,
+            timestamp: e.timestamp,
+            metadata: e.metadata
+          }))
+        };
+        traceDetailEl.textContent = JSON.stringify(compact, null, 2);
+      } catch (err) {
+        traceDetailEl.textContent = `trace 加载失败: ${String(err)}`;
+      }
+    }
+
+    refreshBtn.addEventListener('click', () => loadRuns());
+    runEvalBtn.addEventListener('click', triggerEval);
     loadRuns();
   </script>
 </body>

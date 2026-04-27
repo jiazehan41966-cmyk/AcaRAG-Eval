@@ -1,0 +1,21 @@
+{
+  "metric_drop_thresholds": {
+    "faithfulness": 0.03,
+    "answer_relevancy": 0.03,
+    "question_coverage": 0.03,
+    "context_recall": 0.05,
+    "citation_accuracy": 0.05
+  },
+  "channel_drop_thresholds": {
+    "heuristic": 0.03,
+    "ragas": 0.05,
+    "deepeval": 0.05,
+    "blended_overall": 0.03
+  },
+  "max_failure_increase": {
+    "retrieval_miss": 2,
+    "rerank_error": 2,
+    "citation_error": 1,
+    "unsupported_claim": 1
+  }
+}

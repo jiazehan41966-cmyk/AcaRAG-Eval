@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CI_RUN_EVAL_SMOKE: "false"
+      CI_ENFORCE_REGRESSION_GATE: "true"
       FORCE_MOCK_EMBEDDING: "true"
       QDRANT_FALLBACK_LOCAL: "true"
       ENABLE_RAGAS: "false"
@@ -39,3 +40,7 @@ jobs:
       - name: Eval smoke (optional)
         if: env.CI_RUN_EVAL_SMOKE == 'true'
         run: pytest -q tests/test_api_smoke.py::test_eval_pipeline
+
+      - name: Regression gate
+        if: env.CI_ENFORCE_REGRESSION_GATE == 'true'
+        run: python scripts/check_regression_gate.py --latest

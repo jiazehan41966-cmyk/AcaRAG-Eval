@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from app.core.config import get_settings
 from app.services.agent_service import agent_service
 from app.services.embedding_service import embedding_service
+from app.services.failure_threshold_service import failure_threshold_service
 from app.services.langfuse_service import langfuse_service
 from app.services.storage_service import state_store
 
@@ -19,6 +20,7 @@ from app.services.storage_service import state_store
 class EvalService:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.failure_thresholds = failure_threshold_service.load()
 
     def run_eval(
         self,
@@ -32,6 +34,7 @@ class EvalService:
         set_as_baseline: bool = False,
         compare_with_baseline: bool = True,
     ) -> dict:
+        self.failure_thresholds = failure_threshold_service.load()
         run_id = uuid4().hex
         created_at = datetime.now(timezone.utc).isoformat()
         baseline_name = (baseline_name or run_name).strip()
@@ -76,10 +79,16 @@ class EvalService:
             }
 
             context_recall = (
-                len(expected_support & retrieved_chunk_ids) / len(expected_support) if expected_support else 0.0
+                len(expected_support & retrieved_chunk_ids)
+                / len(expected_support)
+                if expected_support
+                else float(self.failure_thresholds.get("missing_reference_default_score", 1.0))
             )
             citation_accuracy = (
-                len(expected_citations & predicted_citations) / len(expected_citations) if expected_citations else 0.0
+                len(expected_citations & predicted_citations)
+                / len(expected_citations)
+                if expected_citations
+                else float(self.failure_thresholds.get("missing_reference_default_score", 1.0))
             )
             answer_relevancy = self._token_overlap(answer, case.get("ground_truth", ""))
             question_coverage = self._token_overlap(answer, question)
@@ -302,21 +311,27 @@ class EvalService:
         avg_rerank_score: float,
         has_expected_citations: bool,
     ) -> tuple[str, float]:
-        if faithfulness < 0.45:
-            return "unsupported_claim", 1 - faithfulness
+        thresholds = failure_threshold_service.load()
+        unsupported_claim_max_faithfulness = float(thresholds.get("unsupported_claim_max_faithfulness", 0.45))
+        citation_error_min_accuracy = float(thresholds.get("citation_error_min_accuracy", 0.5))
+        retrieval_miss_min_context_recall = float(thresholds.get("retrieval_miss_min_context_recall", 0.35))
+        rerank_error_min_avg_score = float(thresholds.get("rerank_error_min_avg_score", 0.18))
 
-        if has_expected_citations and citation_accuracy < 0.5:
-            return "citation_error", 1 - citation_accuracy
+        if faithfulness < unsupported_claim_max_faithfulness:
+            return "unsupported_claim", unsupported_claim_max_faithfulness - faithfulness
 
-        if context_recall < 0.35:
+        if has_expected_citations and citation_accuracy < citation_error_min_accuracy:
+            return "citation_error", citation_error_min_accuracy - citation_accuracy
+
+        if context_recall < retrieval_miss_min_context_recall:
             if hit_count == 0:
-                return "retrieval_miss", 1 - context_recall
-            if avg_rerank_score < 0.18:
-                return "rerank_error", 1 - avg_rerank_score
-            return "retrieval_miss", 1 - context_recall
+                return "retrieval_miss", retrieval_miss_min_context_recall - context_recall
+            if avg_rerank_score < rerank_error_min_avg_score:
+                return "rerank_error", rerank_error_min_avg_score - avg_rerank_score
+            return "retrieval_miss", retrieval_miss_min_context_recall - context_recall
 
-        if hit_count > 0 and avg_rerank_score < 0.18:
-            return "rerank_error", 1 - avg_rerank_score
+        if hit_count > 0 and avg_rerank_score < rerank_error_min_avg_score:
+            return "rerank_error", rerank_error_min_avg_score - avg_rerank_score
 
         return "none", 0.0
 
@@ -335,10 +350,17 @@ class EvalService:
         return summary
 
     def _run_ragas(self, rows: list[dict]) -> dict:
+        if not self.settings.openai_api_key:
+            return {
+                "status": "skipped",
+                "reason": "OPENAI_API_KEY missing",
+                "scores": {},
+                "overall_score": None,
+            }
         try:
             from datasets import Dataset
             from ragas import evaluate
-            from ragas.metrics.collections import answer_relevancy, context_precision, context_recall, faithfulness
+            from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
         except Exception as exc:
             return {
                 "status": "skipped",
@@ -557,6 +579,8 @@ class EvalService:
         return {
             "baseline_run_id": baseline.get("run_id"),
             "baseline_run_name": baseline.get("run_name"),
+            "baseline_channels": baseline.get("channels", {}),
+            "current_channels": current.get("channels", {}),
             "metric_diff": metric_diff,
             "channel_diff": channel_diff,
             "failure_diff": failure_diff,

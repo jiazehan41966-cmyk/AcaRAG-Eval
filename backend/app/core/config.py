@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     golden_set_dir: Path = Path("data/golden_set")
     eval_reports_dir: Path = Path("data/eval_reports")
 
+    failure_thresholds_path: Path = Path("backend/config/failure_thresholds.json")
+    regression_gate_path: Path = Path("backend/config/regression_gate.json")
+
     default_chunk_size: int = 600
     default_chunk_overlap: int = 120
     default_top_k: int = 5
@@ -44,6 +47,10 @@ class Settings(BaseSettings):
     enable_ragas: bool = False
     enable_deepeval: bool = False
 
+    mcp_mode: str = "inprocess"
+    mcp_server_url: str = "http://127.0.0.1:8765/mcp"
+    mcp_timeout_seconds: int = 15
+
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
@@ -61,6 +68,8 @@ class Settings(BaseSettings):
             self.golden_set_dir,
             self.eval_reports_dir,
             self.qdrant_local_path,
+            self.failure_thresholds_path.parent,
+            self.regression_gate_path.parent,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

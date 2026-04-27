@@ -160,14 +160,22 @@ class IndexService:
         query_vector = bge_model_service.embed(query)
 
         # Primary path: real vector retrieval via Qdrant.
-        hits = qdrant_service.vector_search(query_vector=query_vector, top_k=top_k)
-        if hits:
-            return hits
+        try:
+            hits = qdrant_service.vector_search(query_vector=query_vector, top_k=top_k)
+            if hits:
+                return hits
+        except Exception:
+            # Qdrant may fail when existing collection vector size mismatches current embedding dimension.
+            # We fallback to local cosine retrieval to keep serving traffic.
+            pass
 
         # Fallback path: local cosine retrieval.
         scores = []
         for chunk_id, payload in chunk_vectors.items():
-            score = embedding_service.cosine_similarity(query_vector, payload.get("vector", []))
+            vector = payload.get("vector", [])
+            if len(vector) != len(query_vector):
+                continue
+            score = embedding_service.cosine_similarity(query_vector, vector)
             scores.append((chunk_id, score, payload))
 
         scores.sort(key=lambda item: item[1], reverse=True)
