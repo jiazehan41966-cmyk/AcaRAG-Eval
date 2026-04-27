@@ -17,6 +17,8 @@ data/raw/*
 data/parsed/*
 data/index/*
 data/state/*.json
+data/state/*.json.lock
+data/state/*.json.corrupt
 data/eval_reports/*
 !data/raw/.gitkeep
 !data/parsed/.gitkeep

@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AcaRAG Traces</title>
+  <style>
+    :root {
+      --bg: #f5f7f4;
+      --panel: #ffffff;
+      --accent: #1e6f4f;
+      --accent-weak: #e7f3ed;
+      --text: #12231b;
+      --muted: #56655f;
+      --line: #d7dfdb;
+      --warn: #9f4f00;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 85% 8%, #e6f2eb 0%, #f5f7f4 45%, #edf3ee 100%);
+      color: var(--text);
+    }
+    .topnav {
+      max-width: 1320px;
+      margin: 16px auto 0;
+      padding: 0 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .topnav a {
+      text-decoration: none;
+      font-size: 12px;
+      color: #214f3a;
+      border: 1px solid #bfd4c8;
+      background: #eef6f1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+    .topnav a.active { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .topnav a:hover { transform: translateY(-1px); }
+    .wrap {
+      max-width: 1320px;
+      margin: 14px auto;
+      padding: 0 14px 24px;
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 8px 20px rgba(17, 34, 26, 0.04);
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+    .row label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+    input[type="text"], input[type="number"] {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 120px;
+      font-size: 13px;
+      background: #fbfdfb;
+    }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-ghost { background: #dfece6; color: #194d38; }
+    .status { font-size: 12px; padding: 8px; border-radius: 8px; background: #f2f7f4; margin-bottom: 10px; }
+    .status.error { background: #fff1e8; color: #9a3f00; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 7px 5px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover { background: #f7fbf8; cursor: pointer; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: var(--accent-weak);
+      color: var(--accent);
+    }
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      min-height: 220px;
+      overflow: auto;
+      background: #fbfefc;
+    }
+    .mono {
+      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.45;
+    }
+    .warn { color: var(--warn); }
+    @media (max-width: 1000px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/ui/evaluation">评测</a>
+    <a href="/ui/documents">文档管理</a>
+    <a href="/ui/chat">问答</a>
+    <a href="/ui/traces" class="active">Trace</a>
+  </nav>
+
+  <div class="wrap">
+    <section class="panel">
+      <h1>Trace 列表</h1>
+      <div class="sub">查看 Agent 调用链与 Langfuse 追踪入口。</div>
+      <div id="status" class="status">等待加载。</div>
+      <div class="row">
+        <label>limit<input id="limit" type="number" value="80" min="1" max="500" /></label>
+        <label>trace_id<input id="traceIdInput" type="text" placeholder="可选：直接查询某个 trace_id" style="min-width: 300px;" /></label>
+        <button id="queryTraceBtn">查询单个 Trace</button>
+        <button id="refreshBtn" class="btn-ghost">刷新列表</button>
+      </div>
+
+      <div style="overflow:auto;">
+        <table id="tracesTable">
+          <thead>
+            <tr>
+              <th>trace</th>
+              <th>name</th>
+              <th>status</th>
+              <th>updated_at</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Trace 详情</h2>
+      <div id="traceMeta" class="box">选择左侧 trace 查看详情。</div>
+      <div style="height:10px;"></div>
+      <h2>Events</h2>
+      <div id="traceEvents" class="box mono">暂无事件。</div>
+    </section>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const tracesBody = document.querySelector('#tracesTable tbody');
+    const traceMetaEl = document.getElementById('traceMeta');
+    const traceEventsEl = document.getElementById('traceEvents');
+    const limitEl = document.getElementById('limit');
+    const traceIdInputEl = document.getElementById('traceIdInput');
+
+    function quote(s) {
+      return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function setStatus(text, error=false) {
+      statusEl.textContent = text;
+      statusEl.className = error ? 'status error' : 'status';
+    }
+
+    async function loadTraceDetail(traceId) {
+      if (!traceId) return;
+      traceMetaEl.textContent = '详情加载中...';
+      traceEventsEl.textContent = '事件加载中...';
+      try {
+        const res = await fetch(`/api/traces/${traceId}`);
+        const trace = await res.json();
+        const events = Array.isArray(trace.events) ? trace.events : [];
+        traceMetaEl.innerHTML = `
+          <div><span class="pill">${quote(trace.trace_id || traceId)}</span></div>
+          <div>name: <code>${quote(trace.name || '-')}</code></div>
+          <div>status: <code>${quote(trace.status || '-')}</code></div>
+          <div>langfuse_url: <code>${quote(trace.langfuse_url || '-')}</code></div>
+          <div>created_at: <code>${quote(trace.created_at || '-')}</code></div>
+          <div>updated_at: <code>${quote(trace.updated_at || '-')}</code></div>
+          <div>event_count: <b>${events.length}</b></div>
+          <div>output:</div>
+          <pre class="mono">${quote(JSON.stringify(trace.output || {}, null, 2))}</pre>
+        `;
+
+        traceEventsEl.textContent = JSON.stringify(
+          events.slice(0, 120).map(e => ({
+            name: e.name,
+            level: e.level,
+            timestamp: e.timestamp,
+            metadata: e.metadata
+          })),
+          null,
+          2
+        );
+      } catch (err) {
+        traceMetaEl.textContent = `加载失败: ${String(err)}`;
+        traceEventsEl.textContent = '加载失败。';
+      }
+    }
+
+    async function loadTraces() {
+      tracesBody.innerHTML = '<tr><td colspan="4">加载中...</td></tr>';
+      const limit = Number(limitEl.value || 80);
+      try {
+        const res = await fetch(`/api/traces?limit=${limit}`);
+        const traces = await res.json();
+        if (!Array.isArray(traces) || traces.length === 0) {
+          tracesBody.innerHTML = '<tr><td colspan="4">暂无 trace</td></tr>';
+          return;
+        }
+        tracesBody.innerHTML = '';
+        traces.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="pill">${quote((item.trace_id || '').slice(0, 10))}</span></td>
+            <td>${quote(item.name || '-')}</td>
+            <td class="${item.status !== 'completed' ? 'warn' : ''}">${quote(item.status || '-')}</td>
+            <td>${quote(item.updated_at || item.created_at || '-')}</td>
+          `;
+          tr.addEventListener('click', () => loadTraceDetail(item.trace_id));
+          tracesBody.appendChild(tr);
+        });
+        setStatus(`已加载 ${traces.length} 条 trace。`);
+        await loadTraceDetail(traces[0].trace_id);
+      } catch (err) {
+        tracesBody.innerHTML = `<tr><td colspan="4">加载失败: ${quote(String(err))}</td></tr>`;
+        setStatus(`加载失败: ${String(err)}`, true);
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', loadTraces);
+    document.getElementById('queryTraceBtn').addEventListener('click', async () => {
+      const traceId = traceIdInputEl.value.trim();
+      if (!traceId) {
+        setStatus('请输入 trace_id。', true);
+        return;
+      }
+      setStatus(`查询 trace: ${traceId.slice(0, 8)}...`);
+      await loadTraceDetail(traceId);
+    });
+
+    loadTraces();
+  </script>
+</body>
+</html>

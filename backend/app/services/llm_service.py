@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from app.core.config import get_settings
@@ -91,6 +93,40 @@ class LLMService:
         except Exception as exc:  # pragma: no cover
             self._client_error = str(exc)
             return None
+
+    @staticmethod
+    def _extract_json_block(text: str) -> Any:
+        text = (text or "").strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        match = re.search(r"```json\s*(\{.*?\}|\[.*?\])\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+        match = re.search(r"(\{.*\}|\[.*\])", text, flags=re.DOTALL)
+        if match:
+            candidate = match.group(1).strip()
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
 
     def rewrite_query(self, question: str, route: str) -> tuple[str, dict[str, Any]]:
         prompt = (
@@ -204,6 +240,170 @@ class LLMService:
             "token_cost": 0.0,
             "source": "heuristic",
         }
+
+    def grade_documents(self, question: str, hits: list[dict]) -> tuple[list[dict], dict[str, Any]]:
+        if not hits:
+            return [], {
+                "prompt": "",
+                "input": question,
+                "output": "[]",
+                "model": "heuristic",
+                "source": "heuristic",
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "token_cost": 0.0,
+            }
+
+        snippet_lines = []
+        for idx, hit in enumerate(hits[:12], start=1):
+            text = str(hit.get("text", "")).replace("\n", " ").strip()[:280]
+            snippet_lines.append(
+                f"{idx}. score={hit.get('rerank_score', hit.get('score', 0.0)):.4f}; "
+                f"section={hit.get('section')}; text={text}"
+            )
+        snippet_block = "\n".join(snippet_lines)
+
+        prompt = (
+            "你是文档相关性判别器。根据用户问题判断每个候选证据是否相关。"
+            "请返回 JSON 数组，每项包含 index(从1开始)、relevant(bool)、score(0-1)、reason。"
+        )
+        user_input = f"question={question}\n\ncandidates:\n{snippet_block}"
+        llm_result = self._chat(
+            [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_input},
+            ],
+            max_tokens=700,
+            temperature=0.0,
+        )
+
+        if llm_result and llm_result.get("content"):
+            parsed = self._extract_json_block(str(llm_result.get("content")))
+            if isinstance(parsed, list):
+                by_index = {}
+                for row in parsed:
+                    if not isinstance(row, dict):
+                        continue
+                    idx = int(self._to_float(row.get("index"), -1))
+                    if idx < 1:
+                        continue
+                    by_index[idx] = {
+                        "relevant": bool(row.get("relevant", False)),
+                        "llm_relevance_score": self._to_float(row.get("score"), 0.0),
+                        "llm_relevance_reason": str(row.get("reason", ""))[:280],
+                    }
+
+                graded: list[dict] = []
+                for idx, hit in enumerate(hits, start=1):
+                    info = by_index.get(idx, {})
+                    score = self._to_float(info.get("llm_relevance_score"), 0.0)
+                    relevant = bool(info.get("relevant", score >= 0.5))
+                    graded.append(
+                        {
+                            **hit,
+                            "llm_relevant": relevant,
+                            "llm_relevance_score": round(score, 6),
+                            "llm_relevance_reason": info.get("llm_relevance_reason", ""),
+                        }
+                    )
+                return graded, {
+                    "prompt": prompt,
+                    "input": user_input,
+                    "output": llm_result.get("content", ""),
+                    **llm_result,
+                    "source": "llm",
+                }
+
+        query_tokens = set(embedding_service.tokenize(question))
+        graded = []
+        for hit in hits:
+            text_tokens = set(embedding_service.tokenize(str(hit.get("text", ""))))
+            overlap = len(query_tokens & text_tokens)
+            union = len(query_tokens | text_tokens) or 1
+            score = overlap / union
+            graded.append(
+                {
+                    **hit,
+                    "llm_relevant": score >= 0.08,
+                    "llm_relevance_score": round(score, 6),
+                    "llm_relevance_reason": "heuristic_token_overlap",
+                }
+            )
+        prompt_tokens = self._estimate_tokens(prompt + " " + user_input)
+        completion_tokens = self._estimate_tokens(" ".join(str(item["llm_relevance_score"]) for item in graded))
+        return graded, {
+            "prompt": prompt,
+            "input": user_input,
+            "output": str(
+                [
+                    {
+                        "index": i + 1,
+                        "relevant": item["llm_relevant"],
+                        "score": item["llm_relevance_score"],
+                    }
+                    for i, item in enumerate(graded)
+                ]
+            ),
+            "model": "heuristic",
+            "source": "heuristic",
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "token_cost": 0.0,
+        }
+
+    def check_faithfulness(
+        self,
+        question: str,
+        answer: str,
+        contexts: list[str],
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        if not contexts:
+            return None
+
+        evidence = []
+        for idx, text in enumerate(contexts[:8], start=1):
+            evidence.append(f"[{idx}] {str(text).replace(chr(10), ' ')[:320]}")
+        evidence_block = "\n".join(evidence)
+
+        prompt = (
+            "你是事实一致性评估器。请判断 answer 是否被 evidence 支持。"
+            "输出 JSON：score(0-1), supported_claim_ratio(0-1), reason。"
+        )
+        user_input = f"question={question}\nanswer={answer}\nevidence:\n{evidence_block}"
+        llm_result = self._chat(
+            [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_input},
+            ],
+            max_tokens=220,
+            temperature=0.0,
+        )
+        if not llm_result or not llm_result.get("content"):
+            return None
+
+        parsed = self._extract_json_block(str(llm_result.get("content")))
+        if not isinstance(parsed, dict):
+            return None
+
+        score = max(0.0, min(1.0, self._to_float(parsed.get("score"), 0.0)))
+        ratio = max(0.0, min(1.0, self._to_float(parsed.get("supported_claim_ratio"), score)))
+        reason = str(parsed.get("reason", ""))[:400]
+        result = {
+            "score": round(score, 4),
+            "supported_claim_ratio": round(ratio, 4),
+            "reason": reason or "llm_judge",
+            "source": "llm",
+        }
+        meta = {
+            "prompt": prompt,
+            "input": user_input,
+            "output": llm_result.get("content", ""),
+            **llm_result,
+            "source": "llm",
+        }
+        return result, meta
 
     def health(self) -> dict[str, Any]:
         return {

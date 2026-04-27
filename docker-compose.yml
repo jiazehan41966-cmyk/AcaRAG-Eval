@@ -15,11 +15,33 @@ services:
     environment:
       MCP_MODE: http
       MCP_SERVER_URL: http://paper-eval-mcp:8765/mcp
+      DATABASE_URL: postgresql+psycopg://paper_rag:paper_rag@postgres:5432/paper_rag
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       - qdrant
       - redis
       - postgres
       - paper-eval-mcp
+      - celery-worker
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: paper-rag-celery-worker
+    command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=INFO", "--pool=solo"]
+    working_dir: /app/backend
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: postgresql+psycopg://paper_rag:paper_rag@postgres:5432/paper_rag
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+      - postgres
+      - qdrant
 
   paper-eval-mcp:
     build:

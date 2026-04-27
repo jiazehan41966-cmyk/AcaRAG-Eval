@@ -49,6 +49,10 @@ OPENAI_API_KEY=
 ENABLE_RAGAS=true
 ENABLE_DEEPEVAL=true
 
+# PostgreSQL + Redis (Celery broker/backend)
+DATABASE_URL=postgresql+psycopg://paper_rag:paper_rag@localhost:5432/paper_rag
+REDIS_URL=redis://localhost:6379/0
+
 # MCP transport
 MCP_MODE=inprocess
 MCP_SERVER_URL=http://127.0.0.1:8765/mcp
@@ -66,6 +70,7 @@ LANGFUSE_TRACING_ENABLED=true
 - `MCP_MODE=inprocess`：后端直接以内嵌 FastMCP server 调用工具。
 - `MCP_MODE=http`：后端通过 `MCP_SERVER_URL` 连接独立部署的 FastMCP 服务。
 - 未配置 `OPENAI_API_KEY` 时，LLM 节点和 DeepEval 会自动降级/跳过。
+- 配置 `DATABASE_URL` 后，`documents/chunks/eval_runs/traces/baselines/jobs` 会入 PostgreSQL（并镜像到 `data/state/*.json` 便于本地排查）。
 
 ## 3) Docker 一键启动
 
@@ -76,6 +81,8 @@ docker compose up --build
 该命令会同时启动：
 
 - backend（FastAPI）
+- celery-worker（异步评测/索引任务）
+- paper-eval-mcp（标准 FastMCP 服务）
 - qdrant
 - redis
 - postgres
@@ -117,6 +124,15 @@ python scripts/generate_golden_set.py
 
 默认生成 `80` 条用例（fact/comparison/multi-hop/metadata）。
 
+绑定真实 chunk 证据，避免 `supporting_evidence` / `expected_citation` 使用占位符：
+
+```bash
+python scripts/bind_golden_set_evidence.py --input data/golden_set/golden_set.jsonl
+python scripts/validate_golden_set_references.py --input data/golden_set/golden_set.jsonl --fail-on-placeholder
+```
+
+说明：如果当前文档没有 PDF 页码，脚本会清空 `expected_citation`，不会生成无法命中的假 citation。
+
 ### 5.2 运行评测
 
 ```bash
@@ -132,7 +148,49 @@ curl -X POST "http://localhost:8000/api/eval/run" \
   }'
 ```
 
-### 5.3 失败归因阈值校准
+异步运行（返回 task_id）：
+
+```bash
+curl -X POST "http://localhost:8000/api/eval/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_name": "async_eval_v1",
+    "top_k": 5,
+    "run_async": true
+  }'
+```
+
+查询任务状态：
+
+```bash
+curl "http://localhost:8000/api/eval/jobs"
+curl "http://localhost:8000/api/eval/jobs/{task_id}"
+```
+
+### 5.3 索引构建（支持异步）
+
+```bash
+curl -X POST "http://localhost:8000/api/index/build" \
+  -H "Content-Type: application/json" \
+  -d '{"run_async": true}'
+```
+
+```bash
+curl "http://localhost:8000/api/index/jobs"
+curl "http://localhost:8000/api/index/jobs/{task_id}"
+```
+
+### 5.4 Graph 路由验证
+
+```bash
+python scripts/generate_graph_eval_set.py
+python scripts/bind_golden_set_evidence.py --input data/golden_set/graph_eval_set.jsonl
+python scripts/run_graph_route_validation.py --max-cases 32
+```
+
+产物：`data/eval_reports/graph_route_validation_*.md`。
+
+### 5.5 失败归因阈值校准
 
 ```bash
 python scripts/calibrate_failure_thresholds.py --write
@@ -140,7 +198,7 @@ python scripts/calibrate_failure_thresholds.py --write
 
 阈值写入：`backend/config/failure_thresholds.json`。
 
-### 5.4 回归门禁
+### 5.6 回归门禁
 
 ```bash
 python scripts/check_regression_gate.py --latest
@@ -161,7 +219,21 @@ python scripts/run_real_acceptance.py --run-name real_acceptance --max-cases 20
 
 说明：脚本会在缺少 OPENAI/Langfuse 关键配置时返回非零退出码，并在报告中标记阻塞原因。
 
-## 7) CI
+## 7) Graph route ablation
+
+```bash
+python scripts/generate_graph_eval_set.py
+python scripts/bind_golden_set_evidence.py --input data/golden_set/graph_eval_set.jsonl
+python scripts/run_graph_route_validation.py --max-cases 32
+python scripts/run_graph_ablation.py --max-cases 32
+```
+
+`run_graph_ablation.py` 会对同一批 `comparison` / `multi-hop` 样本分别强制走 `hybrid_rag` 与 `graph_rag`，并输出 `Graph - Hybrid` 指标差异报告：
+
+- `data/eval_reports/graph_route_validation_*.md`
+- `data/eval_reports/graph_ablation_*_vs_*.md`
+
+## 8) CI
 
 工作流：`.github/workflows/ci.yml`
 
@@ -170,8 +242,9 @@ python scripts/run_real_acceptance.py --run-name real_acceptance --max-cases 20
 - `ruff check`
 - `pytest`
 - `python scripts/check_regression_gate.py --latest`（指标回归门禁）
+- 可选：`CI_REAL_ACCEPTANCE=true` 时执行 `scripts/run_real_acceptance.py` 作为真实环境强门禁
 
-## 8) 常见故障排查
+## 9) 常见故障排查
 
 ### Q1: DeepEval 显示 skipped / OPENAI_API_KEY missing
 

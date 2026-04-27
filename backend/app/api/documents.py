@@ -24,6 +24,12 @@ def get_document(doc_id: str):
     return record.model_dump(mode="json")
 
 
+@router.get("")
+def list_documents():
+    docs = document_service.list_documents()
+    return [item.model_dump(mode="json") for item in docs]
+
+
 @router.post("/{doc_id}/parse", response_model=ParseDocumentResponse)
 def parse_document(doc_id: str, request: ParseDocumentRequest):
     record = document_service.get_document(doc_id)

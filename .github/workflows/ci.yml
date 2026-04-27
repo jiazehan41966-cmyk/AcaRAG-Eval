@@ -12,6 +12,7 @@ jobs:
     env:
       CI_RUN_EVAL_SMOKE: "false"
       CI_ENFORCE_REGRESSION_GATE: "true"
+      CI_REAL_ACCEPTANCE: "false"
       FORCE_MOCK_EMBEDDING: "true"
       QDRANT_FALLBACK_LOCAL: "true"
       ENABLE_RAGAS: "false"
@@ -44,3 +45,7 @@ jobs:
       - name: Regression gate
         if: env.CI_ENFORCE_REGRESSION_GATE == 'true'
         run: python scripts/check_regression_gate.py --latest
+
+      - name: Real acceptance gate (optional strong gate)
+        if: env.CI_REAL_ACCEPTANCE == 'true'
+        run: python scripts/run_real_acceptance.py --run-name ci_real_acceptance --max-cases 20

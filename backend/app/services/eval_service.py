@@ -54,6 +54,7 @@ class EvalService:
         if not cases:
             raise HTTPException(status_code=400, detail="No evaluation cases found")
 
+        known_chunk_ids, known_citations = self._known_reference_ids()
         case_results: list[dict] = []
         ragas_rows: list[dict] = []
         deepeval_rows: list[dict] = []
@@ -63,13 +64,21 @@ class EvalService:
             if not question:
                 continue
 
-            result = agent_service.run(question=question, top_k=top_k)
+            result = agent_service.run(
+                question=question,
+                top_k=top_k,
+                force_route=case.get("force_route"),
+            )
             answer = result.get("answer", "")
             citations = list(result.get("citations", []))
             trace = dict(result.get("trace", {}))
 
-            expected_support = set(case.get("supporting_evidence", []) or [])
-            expected_citations = set(case.get("expected_citation", []) or [])
+            raw_expected_support = set(case.get("supporting_evidence", []) or [])
+            raw_expected_citations = set(case.get("expected_citation", []) or [])
+            expected_support = raw_expected_support & known_chunk_ids
+            expected_citations = raw_expected_citations & known_citations
+            invalid_support = sorted(raw_expected_support - expected_support)
+            invalid_citations = sorted(raw_expected_citations - expected_citations)
 
             retrieved_chunk_ids = {item.get("chunk_id") for item in citations if item.get("chunk_id")}
             predicted_citations = {
@@ -94,7 +103,10 @@ class EvalService:
             question_coverage = self._token_overlap(answer, question)
             faithfulness = float(result.get("faithfulness", {}).get("score", 0.0))
 
-            retrieve_step = self._find_step(trace.get("steps", []), "retrieve_docs")
+            retrieve_step = self._find_step(trace.get("steps", []), "retrieve_docs") or self._find_step(
+                trace.get("steps", []),
+                "graph_retrieve",
+            )
             grade_step = self._find_step(trace.get("steps", []), "grade_documents")
             hit_count = int(retrieve_step.get("hit_count", len(citations)) if retrieve_step else len(citations))
             avg_rerank = float(grade_step.get("avg_rerank_score", 0.0) if grade_step else 0.0)
@@ -126,6 +138,8 @@ class EvalService:
                 "citations": citations,
                 "trace": trace,
                 "trace_id": trace.get("trace_id"),
+                "invalid_supporting_evidence": invalid_support,
+                "invalid_expected_citation": invalid_citations,
                 "difficulty": case.get("difficulty", ""),
                 "question_type": case.get("question_type", ""),
             }
@@ -268,6 +282,16 @@ class EvalService:
     def list_eval_runs(self) -> list[dict]:
         return state_store.list_eval_runs()
 
+    def _known_reference_ids(self) -> tuple[set[str], set[str]]:
+        chunks = state_store.list_chunks()
+        chunk_ids = {chunk.id for chunk in chunks}
+        citations = {
+            f"{chunk.doc_id}:{chunk.page}"
+            for chunk in chunks
+            if chunk.doc_id and chunk.page is not None
+        }
+        return chunk_ids, citations
+
     def _load_golden_set(self, golden_set_path: str | None) -> list[dict]:
         path = Path(golden_set_path) if golden_set_path else self.settings.default_golden_set_path
         if not path.exists():
@@ -349,6 +373,39 @@ class EvalService:
         summary["failure_rate"] = round((len(case_results) - summary.get("none", 0)) / len(case_results), 6)
         return summary
 
+    def _extract_ragas_scores(self, result: Any) -> dict[str, float]:
+        raw: dict[str, Any] = {}
+        if hasattr(result, "to_dict"):
+            try:
+                maybe = result.to_dict()
+                if isinstance(maybe, dict):
+                    raw = maybe
+            except Exception:
+                raw = {}
+
+        if not raw and hasattr(result, "to_pandas"):
+            try:
+                frame = result.to_pandas()
+                raw = frame.to_dict(orient="list")
+            except Exception:
+                raw = {}
+
+        if not raw and isinstance(result, dict):
+            raw = result
+
+        scores: dict[str, float] = {}
+        for key, value in raw.items():
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                scores[str(key)] = round(float(value), 6)
+                continue
+            if isinstance(value, list):
+                numeric = [float(item) for item in value if isinstance(item, (int, float)) and not isinstance(item, bool)]
+                if numeric:
+                    scores[str(key)] = self._avg(numeric)
+        return scores
+
     def _run_ragas(self, rows: list[dict]) -> dict:
         if not self.settings.openai_api_key:
             return {
@@ -358,7 +415,8 @@ class EvalService:
                 "overall_score": None,
             }
         try:
-            from datasets import Dataset
+            import ragas
+            from ragas import EvaluationDataset
             from ragas import evaluate
             from ragas.metrics import answer_relevancy, context_precision, context_recall, faithfulness
         except Exception as exc:
@@ -369,39 +427,65 @@ class EvalService:
                 "overall_score": None,
             }
 
-        dataset = Dataset.from_dict(
-            {
-                "question": [row["question"] for row in rows],
-                "answer": [row["answer"] for row in rows],
-                "contexts": [row["contexts"] for row in rows],
-                "ground_truth": [row["ground_truth"] for row in rows],
-            }
-        )
-
         try:
+            records = [
+                {
+                    "user_input": row["question"],
+                    "response": row["answer"],
+                    "retrieved_contexts": row["contexts"] or [],
+                    "reference": row["ground_truth"],
+                }
+                for row in rows
+            ]
+            dataset = EvaluationDataset.from_list(records)
             result = evaluate(
                 dataset=dataset,
                 metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+                show_progress=False,
+                raise_exceptions=False,
             )
-            if hasattr(result, "to_dict"):
-                scores = result.to_dict()
-            elif hasattr(result, "__dict__"):
-                scores = dict(result.__dict__)
-            else:
-                scores = {}
-
+            scores = self._extract_ragas_scores(result)
             numeric_values = [float(v) for v in scores.values() if isinstance(v, (int, float))]
             overall = self._avg(numeric_values) if numeric_values else None
             return {
                 "status": "completed",
-                "reason": "ok",
+                "reason": f"ok: ragas {getattr(ragas, '__version__', 'unknown')} EvaluationDataset",
+                "scores": scores,
+                "overall_score": overall,
+            }
+        except Exception as exc:  # pragma: no cover
+            first_error = str(exc)
+
+        try:
+            from datasets import Dataset
+
+            legacy_dataset = Dataset.from_dict(
+                {
+                    "question": [row["question"] for row in rows],
+                    "answer": [row["answer"] for row in rows],
+                    "contexts": [row["contexts"] for row in rows],
+                    "ground_truth": [row["ground_truth"] for row in rows],
+                }
+            )
+            result = evaluate(
+                dataset=legacy_dataset,
+                metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
+                show_progress=False,
+                raise_exceptions=False,
+            )
+            scores = self._extract_ragas_scores(result)
+            numeric_values = [float(v) for v in scores.values() if isinstance(v, (int, float))]
+            overall = self._avg(numeric_values) if numeric_values else None
+            return {
+                "status": "completed",
+                "reason": f"ok: legacy datasets fallback; primary_error={first_error}",
                 "scores": scores,
                 "overall_score": overall,
             }
         except Exception as exc:  # pragma: no cover
             return {
                 "status": "failed",
-                "reason": str(exc),
+                "reason": f"EvaluationDataset error: {first_error}; legacy error: {exc}",
                 "scores": {},
                 "overall_score": None,
             }
@@ -654,6 +738,8 @@ class EvalService:
         cases: list[dict],
     ) -> Path:
         report_path = self.settings.eval_reports_dir / f"{run_id}.md"
+        invalid_support_count = sum(1 for case in cases if case.get("invalid_supporting_evidence"))
+        invalid_citation_count = sum(1 for case in cases if case.get("invalid_expected_citation"))
 
         lines = [
             f"# Eval Report: {run_name}",
@@ -689,6 +775,11 @@ class EvalService:
             f"| unsupported_claim | {failure_summary.get('unsupported_claim', 0)} |",
             f"| none | {failure_summary.get('none', 0)} |",
             f"| failure_rate | {failure_summary.get('failure_rate', 0.0)} |",
+            "",
+            "## Golden Set Reference Quality",
+            "",
+            f"- Invalid Supporting Evidence Cases: `{invalid_support_count}`",
+            f"- Invalid Expected Citation Cases: `{invalid_citation_count}`",
             "",
             "## RAGAS",
             "",
@@ -732,6 +823,8 @@ class EvalService:
                     f"- Failure Type: `{case.get('failure_type')}`",
                     f"- Failure Score: `{case.get('failure_score')}`",
                     f"- Trace ID: `{case.get('trace_id')}`",
+                    f"- Invalid Supporting Evidence: `{case.get('invalid_supporting_evidence', [])}`",
+                    f"- Invalid Expected Citation: `{case.get('invalid_expected_citation', [])}`",
                     "",
                     "Answer:",
                     "",

@@ -42,6 +42,9 @@ class DocumentService:
         state_store.save_document(record)
         return record
 
+    def list_documents(self) -> list[DocumentRecord]:
+        return state_store.list_documents()
+
     def list_chunks(self, doc_id: str):
         return state_store.get_chunks(doc_id)
 

@@ -1,4 +1,13 @@
-﻿from . import call_mcp_tool, check_faithfulness, classify_question, generate_answer, grade_documents, retrieve_docs, rewrite_query
+﻿from . import (
+    call_mcp_tool,
+    check_faithfulness,
+    classify_question,
+    generate_answer,
+    grade_documents,
+    graph_retrieve,
+    retrieve_docs,
+    rewrite_query,
+)
 
 __all__ = [
     "call_mcp_tool",
@@ -6,6 +15,7 @@ __all__ = [
     "classify_question",
     "generate_answer",
     "grade_documents",
+    "graph_retrieve",
     "retrieve_docs",
     "rewrite_query",
 ]

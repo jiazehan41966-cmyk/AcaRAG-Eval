@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AcaRAG Chat</title>
+  <style>
+    :root {
+      --bg: #f4f7f3;
+      --panel: #ffffff;
+      --accent: #1e6f4f;
+      --accent-weak: #e7f3ed;
+      --text: #12231b;
+      --muted: #56655f;
+      --line: #d7dfdb;
+      --warn: #a35200;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;
+      background: linear-gradient(160deg, #ebf4ef 0%, #f4f7f3 48%, #edf4ef 100%);
+      color: var(--text);
+    }
+    .topnav {
+      max-width: 1320px;
+      margin: 16px auto 0;
+      padding: 0 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .topnav a {
+      text-decoration: none;
+      font-size: 12px;
+      color: #214f3a;
+      border: 1px solid #bfd4c8;
+      background: #eef6f1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+    .topnav a.active { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .topnav a:hover { transform: translateY(-1px); }
+    .wrap {
+      max-width: 1320px;
+      margin: 14px auto;
+      padding: 0 14px 24px;
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 8px 20px rgba(17, 34, 26, 0.04);
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: flex-end; }
+    .row label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      font-size: 14px;
+      resize: vertical;
+      background: #fbfefc;
+      color: var(--text);
+    }
+    input[type="number"] {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 90px;
+      font-size: 13px;
+      background: #fbfdfb;
+    }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-ghost { background: #dfece6; color: #194d38; }
+    .status { font-size: 12px; padding: 8px; border-radius: 8px; background: #f2f7f4; margin-bottom: 10px; }
+    .status.error { background: #fff1e8; color: #9a3f00; }
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      min-height: 180px;
+      overflow: auto;
+      background: #fbfefc;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .answer {
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.75;
+      padding: 10px;
+      border: 1px dashed #c9d8d1;
+      border-radius: 10px;
+      background: #f9fcfa;
+      min-height: 110px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: var(--accent-weak);
+      color: var(--accent);
+    }
+    .mono {
+      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .list { margin: 8px 0 0; padding-left: 16px; font-size: 12px; }
+    .list li { margin: 4px 0; }
+    .warn { color: var(--warn); }
+    @media (max-width: 1000px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/ui/evaluation">评测</a>
+    <a href="/ui/documents">文档管理</a>
+    <a href="/ui/chat" class="active">问答</a>
+    <a href="/ui/traces">Trace</a>
+  </nav>
+
+  <div class="wrap">
+    <section class="panel">
+      <h1>学术问答</h1>
+      <div class="sub">输入问题后查看答案、引用和 route 走向，支持直接跳转 trace 详情。</div>
+      <div id="status" class="status">等待提问。</div>
+
+      <textarea id="question" placeholder="例如：请比较方法A和方法B在数据集与指标上的差异，并给出证据。"></textarea>
+      <div class="row">
+        <label>top_k<input id="topK" type="number" value="5" min="1" max="20" /></label>
+        <button id="askBtn">提问</button>
+        <button id="fillGraphBtn" class="btn-ghost">填充 Graph 示例</button>
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <span id="routePill" class="pill">route: -</span>
+        <span id="tracePill" class="pill">trace: -</span>
+      </div>
+
+      <div id="answer" class="answer">回答将在这里展示。</div>
+
+      <h2 style="margin-top:10px;">Citations</h2>
+      <div id="citations" class="box">暂无。</div>
+    </section>
+
+    <section class="panel">
+      <h2>Trace 快照</h2>
+      <div class="sub">展示当前问答对应的 trace 事件，便于检查 rewrite/retrieve/tool/faithfulness。</div>
+      <div id="trace" class="box mono">暂无。</div>
+      <div style="height:10px;"></div>
+      <h2>检索片段</h2>
+      <div id="retrieved" class="box">暂无。</div>
+    </section>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const questionEl = document.getElementById('question');
+    const topKEl = document.getElementById('topK');
+    const answerEl = document.getElementById('answer');
+    const citationsEl = document.getElementById('citations');
+    const routePillEl = document.getElementById('routePill');
+    const tracePillEl = document.getElementById('tracePill');
+    const traceEl = document.getElementById('trace');
+    const retrievedEl = document.getElementById('retrieved');
+
+    function quote(s) {
+      return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function setStatus(text, error=false) {
+      statusEl.textContent = text;
+      statusEl.className = error ? 'status error' : 'status';
+    }
+
+    function renderCitations(citations) {
+      if (!Array.isArray(citations) || citations.length === 0) {
+        return '暂无 citations。';
+      }
+      return `
+        <ul class="list">
+          ${citations.slice(0, 12).map(c => `
+            <li>
+              <b>${quote(c.doc_id || '-')}</b> | section=${quote(c.section || '-')} | page=${quote(c.page)}
+              | score=${quote(c.rerank_score ?? c.score)}
+              <div class="mono">${quote(String(c.text || '').slice(0, 260))}</div>
+            </li>
+          `).join('')}
+        </ul>
+      `;
+    }
+
+    function renderRetrieved(retrievedDocs) {
+      if (!Array.isArray(retrievedDocs) || retrievedDocs.length === 0) return '暂无。';
+      const flat = [];
+      for (const round of retrievedDocs) {
+        for (const h of (round.hits || [])) {
+          flat.push({
+            attempt: round.attempt,
+            strategy: round.strategy || 'hybrid',
+            chunk_id: h.chunk_id,
+            doc_id: h.doc_id,
+            score: h.score,
+            section: h.section,
+            matched_entities: h.matched_entities || []
+          });
+        }
+      }
+      return `<pre class="mono">${quote(JSON.stringify(flat.slice(0, 24), null, 2))}</pre>`;
+    }
+
+    async function loadTrace(traceId) {
+      if (!traceId) {
+        traceEl.textContent = '无 trace_id。';
+        return;
+      }
+      traceEl.textContent = 'trace 加载中...';
+      try {
+        const res = await fetch(`/api/traces/${traceId}`);
+        const trace = await res.json();
+        const compact = {
+          trace_id: trace.trace_id,
+          status: trace.status,
+          langfuse_url: trace.langfuse_url,
+          events: (trace.events || []).slice(0, 20).map(e => ({
+            name: e.name,
+            timestamp: e.timestamp,
+            metadata: e.metadata
+          }))
+        };
+        traceEl.textContent = JSON.stringify(compact, null, 2);
+      } catch (err) {
+        traceEl.textContent = `trace 加载失败: ${String(err)}`;
+      }
+    }
+
+    async function ask() {
+      const q = questionEl.value.trim();
+      if (!q) {
+        setStatus('请输入问题。', true);
+        return;
+      }
+      const payload = {
+        question: q,
+        top_k: Number(topKEl.value || 5),
+      };
+      setStatus('生成中...');
+      answerEl.textContent = '生成中...';
+      citationsEl.textContent = '加载中...';
+      traceEl.textContent = '加载中...';
+      retrievedEl.textContent = '加载中...';
+
+      try {
+        const res = await fetch('/api/chat/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(`请求失败: ${JSON.stringify(data)}`, true);
+          answerEl.textContent = '请求失败。';
+          return;
+        }
+
+        const route = data.route || '-';
+        const traceId = data.trace_id || '-';
+        routePillEl.textContent = `route: ${route}`;
+        tracePillEl.textContent = `trace: ${traceId}`;
+
+        answerEl.textContent = data.answer || '';
+        citationsEl.innerHTML = renderCitations(data.citations || []);
+        retrievedEl.innerHTML = renderRetrieved(data.trace?.retrieved_docs || []);
+        await loadTrace(data.trace_id);
+
+        const isGraph = route === 'graph_rag';
+        setStatus(`完成：route=${route}${isGraph ? '（已命中 graph-enhanced）' : ''}`);
+      } catch (err) {
+        setStatus(`请求异常: ${String(err)}`, true);
+        answerEl.textContent = '请求异常。';
+      }
+    }
+
+    document.getElementById('askBtn').addEventListener('click', ask);
+    document.getElementById('fillGraphBtn').addEventListener('click', () => {
+      questionEl.value = 'Compare method A versus method B on datasets and metrics, and cite evidence.';
+      topKEl.value = '5';
+    });
+  </script>
+</body>
+</html>

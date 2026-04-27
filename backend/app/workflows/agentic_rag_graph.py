@@ -12,6 +12,7 @@ from app.workflows.nodes import (
     classify_question,
     generate_answer,
     grade_documents,
+    graph_retrieve,
     retrieve_docs,
     rewrite_query,
 )
@@ -20,6 +21,7 @@ from app.workflows.nodes import (
 class AgentGraphState(TypedDict, total=False):
     question: str
     route: str
+    force_route: str
     rewritten_query: str
     top_k: int
     retrieve_attempts: int
@@ -47,6 +49,7 @@ class AgenticRAGGraph:
         builder.add_node("call_mcp_tool", call_mcp_tool.run)
         builder.add_node("rewrite_query", rewrite_query.run)
         builder.add_node("retrieve_docs", retrieve_docs.run)
+        builder.add_node("graph_retrieve", graph_retrieve.run)
         builder.add_node("grade_documents", grade_documents.run)
         builder.add_node("generate_answer", generate_answer.run)
         builder.add_node("check_faithfulness", check_faithfulness.run)
@@ -62,8 +65,16 @@ class AgenticRAGGraph:
             },
         )
 
-        builder.add_edge("rewrite_query", "retrieve_docs")
+        builder.add_conditional_edges(
+            "rewrite_query",
+            self._route_after_rewrite,
+            {
+                "graph": "graph_retrieve",
+                "retrieve": "retrieve_docs",
+            },
+        )
         builder.add_edge("retrieve_docs", "grade_documents")
+        builder.add_edge("graph_retrieve", "grade_documents")
 
         builder.add_conditional_edges(
             "grade_documents",
@@ -87,10 +98,16 @@ class AgenticRAGGraph:
         return "retrieval"
 
     @staticmethod
+    def _route_after_rewrite(state: AgentGraphState) -> str:
+        if state.get("route") == "graph_rag":
+            return "graph"
+        return "retrieve"
+
+    @staticmethod
     def _route_after_grading(state: AgentGraphState) -> str:
         return "retry" if state.get("should_retry") else "generate"
 
-    def run(self, question: str, top_k: int = 5) -> dict:
+    def run(self, question: str, top_k: int = 5, force_route: str | None = None) -> dict:
         trace_record = langfuse_service.create_trace(
             name="agentic_rag.ask",
             input_payload={"question": question, "top_k": top_k},
@@ -102,6 +119,7 @@ class AgenticRAGGraph:
         initial_state: AgentGraphState = {
             "question": question,
             "top_k": top_k,
+            "force_route": force_route,
             "retrieve_attempts": 0,
             "should_retry": False,
             "hits": [],
@@ -201,5 +219,5 @@ class AgenticRAGGraph:
 agentic_rag_graph = AgenticRAGGraph()
 
 
-def run_agentic_rag(question: str, top_k: int = 5) -> dict:
-    return agentic_rag_graph.run(question=question, top_k=top_k)
+def run_agentic_rag(question: str, top_k: int = 5, force_route: str | None = None) -> dict:
+    return agentic_rag_graph.run(question=question, top_k=top_k, force_route=force_route)

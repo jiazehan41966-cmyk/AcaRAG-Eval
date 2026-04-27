@@ -6,14 +6,19 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from app.core.config import get_settings
 from app.models.document import ChunkRecord
 from app.services.bge_service import bge_model_service
 from app.services.embedding_service import embedding_service
+from app.services.graph_service import graph_service
 from app.services.qdrant_service import qdrant_service
 from app.services.storage_service import state_store
 
 
 class IndexService:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
     def tokenize(self, text: str) -> list[str]:
         return embedding_service.tokenize(text)
 
@@ -72,12 +77,12 @@ class IndexService:
             raise HTTPException(status_code=500, detail="Failed to compute embeddings")
 
         vector_size = len(vectors[0])
-        if selected_doc_ids is None:
-            qdrant_service.clear_collection(vector_size)
-        else:
-            qdrant_service.ensure_collection(vector_size)
-
-        qdrant_service.upsert_chunks(selected_chunks, vectors)
+        if not self.settings.force_mock_embedding:
+            if selected_doc_ids is None:
+                qdrant_service.clear_collection(vector_size)
+            else:
+                qdrant_service.ensure_collection(vector_size)
+            qdrant_service.upsert_chunks(selected_chunks, vectors)
 
         for chunk, vector in zip(selected_chunks, vectors):
             chunk_vectors[chunk.id] = {
@@ -90,13 +95,17 @@ class IndexService:
             }
 
         bm25 = self._build_bm25(chunk_vectors)
+        graph_index = graph_service.build_graph_index(chunk_vectors)
 
         payload = {
             "chunk_vectors": chunk_vectors,
             "bm25": bm25,
+            "graph_index": graph_index,
             "built_at": datetime.now(timezone.utc).isoformat(),
             "embedding": bge_model_service.health(),
-            "qdrant": qdrant_service.health(),
+            "qdrant": qdrant_service.health()
+            if not self.settings.force_mock_embedding
+            else {"mode": "disabled_mock", "collection": qdrant_service.collection_name},
         }
         state_store.save_index(payload)
 
@@ -111,7 +120,7 @@ class IndexService:
 
     def rebuild_index(self, doc_ids: list[str] | None = None) -> dict:
         if doc_ids is None:
-            state_store.save_index({"chunk_vectors": {}, "bm25": {}})
+            state_store.save_index({"chunk_vectors": {}, "bm25": {}, "graph_index": {}})
         return self.build_index(doc_ids=doc_ids)
 
     def bm25_search(self, query: str, top_k: int = 5, index: dict | None = None) -> list[dict]:
@@ -160,14 +169,15 @@ class IndexService:
         query_vector = bge_model_service.embed(query)
 
         # Primary path: real vector retrieval via Qdrant.
-        try:
-            hits = qdrant_service.vector_search(query_vector=query_vector, top_k=top_k)
-            if hits:
-                return hits
-        except Exception:
-            # Qdrant may fail when existing collection vector size mismatches current embedding dimension.
-            # We fallback to local cosine retrieval to keep serving traffic.
-            pass
+        if not self.settings.force_mock_embedding:
+            try:
+                hits = qdrant_service.vector_search(query_vector=query_vector, top_k=top_k)
+                if hits:
+                    return hits
+            except Exception:
+                # Qdrant may fail when existing collection vector size mismatches current embedding dimension.
+                # We fallback to local cosine retrieval to keep serving traffic.
+                pass
 
         # Fallback path: local cosine retrieval.
         scores = []
@@ -181,8 +191,8 @@ class IndexService:
         scores.sort(key=lambda item: item[1], reverse=True)
         return [self._to_hit(chunk_id, score, payload) for chunk_id, score, payload in scores[:top_k]]
 
-    def hybrid_search(self, query: str, top_k: int = 5, alpha: float = 0.6) -> list[dict]:
-        index = self._load_index_payload()
+    def hybrid_search(self, query: str, top_k: int = 5, alpha: float = 0.6, index: dict | None = None) -> list[dict]:
+        index = index if index is not None else self._load_index_payload()
         vector_hits = self.vector_search(query, top_k=max(top_k * 3, 10), index=index)
         bm25_hits = self.bm25_search(query, top_k=max(top_k * 3, 10), index=index)
 
@@ -211,6 +221,26 @@ class IndexService:
     def rerank(self, query: str, candidates: list[str], top_k: int = 5) -> list[dict]:
         return bge_model_service.rerank(query=query, documents=candidates, top_k=top_k)
 
+    def graph_search(self, query: str, top_k: int = 5) -> list[dict]:
+        index = self._load_index_payload()
+        chunk_vectors = index.get("chunk_vectors") or {}
+        if not chunk_vectors:
+            raise HTTPException(status_code=400, detail="Index is empty. Build index first.")
+
+        graph_index = index.get("graph_index") or {}
+        if not graph_index or graph_index.get("version") != 2:
+            graph_index = graph_service.build_graph_index(chunk_vectors)
+
+        candidate_k = max(top_k * 3, 10)
+        graph_hits = graph_service.graph_search(
+            query=query,
+            top_k=candidate_k,
+            chunk_payloads=chunk_vectors,
+            graph_index=graph_index,
+        )
+        hybrid_hits = self.hybrid_search(query=query, top_k=candidate_k, alpha=0.6, index=index)
+        return self._merge_graph_hybrid_hits(graph_hits=graph_hits, hybrid_hits=hybrid_hits, top_k=top_k)
+
     def rerank_hits(self, query: str, hits: list[dict], top_k: int = 5) -> list[dict]:
         if not hits:
             return []
@@ -225,6 +255,56 @@ class IndexService:
 
         merged.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
         return merged[:top_k]
+
+    @staticmethod
+    def _merge_graph_hybrid_hits(graph_hits: list[dict], hybrid_hits: list[dict], top_k: int) -> list[dict]:
+        max_graph = max([float(item.get("score", 0.0)) for item in graph_hits], default=1.0) or 1.0
+        max_hybrid = max([float(item.get("score", 0.0)) for item in hybrid_hits], default=1.0) or 1.0
+        merged: dict[str, dict] = {}
+
+        for item in hybrid_hits:
+            chunk_id = item.get("chunk_id")
+            if not chunk_id:
+                continue
+            merged[chunk_id] = {
+                **item,
+                "score": float(item.get("score", 0.0)) / max_hybrid,
+                "metadata": {
+                    **(item.get("metadata", {}) or {}),
+                    "retrieval_sources": ["hybrid"],
+                    "hybrid_score": float(item.get("score", 0.0)),
+                    "graph_score": 0.0,
+                    "matched_entities": [],
+                },
+            }
+
+        for item in graph_hits:
+            chunk_id = item.get("chunk_id")
+            if not chunk_id:
+                continue
+            graph_norm = float(item.get("score", 0.0)) / max_graph
+            matched_entities = list((item.get("metadata") or {}).get("matched_entities", []))
+            existing = merged.get(chunk_id, item)
+            metadata = {
+                **(existing.get("metadata", {}) or {}),
+                **(item.get("metadata", {}) or {}),
+            }
+            sources = set(metadata.get("retrieval_sources", []))
+            sources.add("graph")
+            metadata["retrieval_sources"] = sorted(sources)
+            metadata["graph_score"] = float(item.get("score", 0.0))
+            metadata["matched_entities"] = sorted(set(metadata.get("matched_entities", [])) | set(matched_entities))
+            hybrid_norm = float(existing.get("score", 0.0)) if chunk_id in merged else 0.0
+            entity_bonus = min(len(metadata["matched_entities"]) * 0.03, 0.18)
+            merged[chunk_id] = {
+                **existing,
+                **item,
+                "metadata": metadata,
+                "score": round(hybrid_norm + (0.35 * graph_norm) + entity_bonus, 6),
+            }
+
+        ranked = sorted(merged.values(), key=lambda x: x.get("score", 0.0), reverse=True)
+        return ranked[:top_k]
 
     def _to_hit(self, chunk_id: str, score: float, payload: dict) -> dict:
         return {

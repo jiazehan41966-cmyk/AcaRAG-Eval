@@ -50,16 +50,13 @@ def build_cases() -> list[dict]:
         pool = templates[question_type]
         for i in range(n):
             q, a = pool[i % len(pool)]
-            idx = len(cases) + 1
-            evidence = [f"evidence_{question_type}_{idx}"] if idx % 3 == 0 else []
-            citations = [f"paper_{(idx % 7) + 1}:{(idx % 9) + 1}"] if idx % 4 == 0 else []
             difficulty = "easy" if i < n * 0.35 else ("medium" if i < n * 0.75 else "hard")
             cases.append(
                 {
                     "question": q,
                     "ground_truth": a,
-                    "supporting_evidence": evidence,
-                    "expected_citation": citations,
+                    "supporting_evidence": [],
+                    "expected_citation": [],
                     "difficulty": difficulty,
                     "question_type": question_type,
                     "failure_label": "",

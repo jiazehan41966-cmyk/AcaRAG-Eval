@@ -2,6 +2,7 @@
 
 import uuid
 from pathlib import Path
+import shutil
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -47,6 +48,21 @@ class QdrantService:
         self._mode = "local"
         return local
 
+    def _reset_local_client(self) -> None:
+        if self._mode != "local":
+            return
+        try:
+            if self._client is not None:
+                self._client.close()
+        except Exception:
+            pass
+
+        local_path = Path(self.settings.qdrant_local_path)
+        if local_path.exists():
+            shutil.rmtree(local_path, ignore_errors=True)
+        local_path.mkdir(parents=True, exist_ok=True)
+        self._client = QdrantClient(path=str(local_path))
+
     def health(self) -> dict:
         return {
             "mode": self._mode,
@@ -91,8 +107,12 @@ class QdrantService:
             )
 
     def clear_collection(self, vector_size: int) -> None:
+        if self._mode == "local":
+            self._reset_local_client()
+
         if self.collection_exists():
             self.client.delete_collection(collection_name=self.collection_name)
+
         self.client.create_collection(
             collection_name=self.collection_name,
             vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
@@ -124,7 +144,16 @@ class QdrantService:
             point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.id))
             points.append(models.PointStruct(id=point_id, vector=vec, payload=payload))
 
-        self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
+        try:
+            self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
+        except ValueError as exc:
+            if "could not broadcast input array" not in str(exc):
+                raise
+            vector_size = len(vectors[0]) if vectors else 0
+            if vector_size <= 0:
+                raise
+            self.clear_collection(vector_size=vector_size)
+            self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
 
     def vector_search(self, query_vector: list[float], top_k: int) -> list[dict]:
         if not self.collection_exists():

@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     golden_set_dir: Path = Path("data/golden_set")
     eval_reports_dir: Path = Path("data/eval_reports")
 
+    database_url: str | None = None
+    redis_url: str = "redis://localhost:6379/0"
+
     failure_thresholds_path: Path = Path("backend/config/failure_thresholds.json")
     regression_gate_path: Path = Path("backend/config/regression_gate.json")
 

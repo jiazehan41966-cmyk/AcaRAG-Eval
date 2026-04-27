@@ -11,16 +11,19 @@ class EvalRunRequest(BaseModel):
     baseline_name: str | None = None
     set_as_baseline: bool = False
     compare_with_baseline: bool = True
+    run_async: bool = False
 
 
 class EvalRunResponse(BaseModel):
-    run_id: str
-    run_name: str
+    run_id: str | None = None
+    run_name: str | None = None
     status: str
-    cases: int
-    report_path: str
+    cases: int | None = None
+    report_path: str | None = None
     regression_report_path: str | None = None
     baseline_name: str | None = None
+    task_id: str | None = None
+    task_backend: str | None = None
     failure_summary: dict = Field(default_factory=dict)
 
 
@@ -53,3 +56,16 @@ class EvalRunDetailResponse(BaseModel):
     regression_report_path: str | None = None
     created_at: str
     results: list[dict] = Field(default_factory=list)
+
+
+class EvalJobResponse(BaseModel):
+    job_id: str
+    job_type: str | None = None
+    status: str
+    backend: str | None = None
+    celery_task_id: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    run_id: str | None = None
+    run_name: str | None = None
+    error: str | None = None

@@ -22,6 +22,30 @@
       color: var(--text);
       background: radial-gradient(circle at 20% 10%, #e7f2ea 0%, var(--bg) 35%, #edf3ef 100%);
     }
+    .topnav {
+      max-width: 1320px;
+      margin: 16px auto 0;
+      padding: 0 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .topnav a {
+      text-decoration: none;
+      font-size: 12px;
+      color: #214f3a;
+      border: 1px solid #bfd4c8;
+      background: #eef6f1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+    .topnav a.active {
+      color: #fff;
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+    .topnav a:hover { transform: translateY(-1px); }
     .wrap {
       max-width: 1320px;
       margin: 20px auto;
@@ -117,6 +141,12 @@
   </style>
 </head>
 <body>
+  <nav class="topnav">
+    <a href="/ui/evaluation" class="active">评测</a>
+    <a href="/ui/documents">文档管理</a>
+    <a href="/ui/chat">问答</a>
+    <a href="/ui/traces">Trace</a>
+  </nav>
   <div class="wrap">
     <section class="panel">
       <h1>评测运行列表</h1>

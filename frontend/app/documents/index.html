@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AcaRAG Documents</title>
+  <style>
+    :root {
+      --bg: #f3f6f2;
+      --panel: #ffffff;
+      --accent: #1d6e4e;
+      --accent-weak: #e4f2ec;
+      --text: #12231b;
+      --muted: #56655f;
+      --line: #d7dfdb;
+      --warn: #a35200;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Source Han Sans SC", "Noto Sans SC", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 10% 0%, #e8f3ed 0%, #f3f6f2 40%, #eef4ef 100%);
+      color: var(--text);
+    }
+    .topnav {
+      max-width: 1320px;
+      margin: 16px auto 0;
+      padding: 0 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .topnav a {
+      text-decoration: none;
+      font-size: 12px;
+      color: #214f3a;
+      border: 1px solid #bfd4c8;
+      background: #eef6f1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      transition: all 0.2s ease;
+    }
+    .topnav a.active { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .topnav a:hover { transform: translateY(-1px); }
+    .wrap {
+      max-width: 1320px;
+      margin: 14px auto;
+      padding: 0 14px 24px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 14px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 8px 20px rgba(17, 34, 26, 0.04);
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: flex-end; }
+    .row label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+    input[type="text"], input[type="number"] {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 120px;
+      font-size: 13px;
+      background: #fbfdfb;
+    }
+    input[type="file"] { font-size: 12px; }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-ghost { background: #dfece6; color: #194d38; }
+    .status { font-size: 12px; padding: 8px; border-radius: 8px; background: #f2f7f4; margin-bottom: 10px; }
+    .status.error { background: #fff1e8; color: #9a3f00; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 7px 5px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover { background: #f7fbf8; cursor: pointer; }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: var(--accent-weak);
+      color: var(--accent);
+    }
+    .warn { color: var(--warn); }
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      min-height: 180px;
+      overflow: auto;
+      background: #fbfefc;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .mono { font-family: Consolas, "SFMono-Regular", Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+    .links a { color: var(--accent); text-decoration: none; margin-right: 10px; }
+    @media (max-width: 1000px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/ui/evaluation">评测</a>
+    <a href="/ui/documents" class="active">文档管理</a>
+    <a href="/ui/chat">问答</a>
+    <a href="/ui/traces">Trace</a>
+  </nav>
+
+  <div class="wrap">
+    <section class="panel">
+      <h1>文档管理</h1>
+      <div class="sub">上传论文、触发解析、构建索引（异步）。</div>
+
+      <div id="status" class="status">等待操作。</div>
+
+      <div class="row">
+        <label>上传文件
+          <input id="uploadFile" type="file" accept=".pdf,.md,.txt" />
+        </label>
+        <button id="uploadBtn">上传</button>
+        <button id="refreshBtn" class="btn-ghost">刷新文档列表</button>
+      </div>
+
+      <div class="row">
+        <label>chunk_size<input id="chunkSize" type="number" value="600" min="100" max="4000" /></label>
+        <label>chunk_overlap<input id="chunkOverlap" type="number" value="120" min="0" max="1000" /></label>
+        <button id="parseBtn">解析选中文档</button>
+      </div>
+
+      <div class="row">
+        <button id="buildIndexBtn">异步构建索引</button>
+        <button id="rebuildIndexBtn" class="btn-ghost">异步重建索引</button>
+        <span id="indexJobHint" class="sub" style="margin:0;"></span>
+      </div>
+
+      <div style="overflow:auto;">
+        <table id="docsTable">
+          <thead>
+            <tr>
+              <th>doc_id</th>
+              <th>filename</th>
+              <th>status</th>
+              <th>uploaded_at</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>文档详情</h2>
+      <div class="sub">查看元数据与 chunk 内容，形成“上传 -> 解析 -> 检索”前置闭环。</div>
+      <div id="docMeta" class="box">点击左侧文档查看详情。</div>
+      <div style="height:10px;"></div>
+      <div id="docChunks" class="box mono">点击左侧文档查看 chunk。</div>
+      <div style="height:10px;"></div>
+      <div class="links">
+        <a href="/ui/chat">进入问答页</a>
+        <a href="/ui/evaluation">进入评测页</a>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const docsBody = document.querySelector('#docsTable tbody');
+    const docMetaEl = document.getElementById('docMeta');
+    const docChunksEl = document.getElementById('docChunks');
+    const indexJobHintEl = document.getElementById('indexJobHint');
+
+    const uploadFileEl = document.getElementById('uploadFile');
+    const chunkSizeEl = document.getElementById('chunkSize');
+    const chunkOverlapEl = document.getElementById('chunkOverlap');
+
+    let selectedDocId = null;
+
+    function quote(s) {
+      return String(s ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function setStatus(text, error=false) {
+      statusEl.textContent = text;
+      statusEl.className = error ? 'status error' : 'status';
+    }
+
+    async function loadDocuments(preferDocId = null) {
+      docsBody.innerHTML = '<tr><td colspan="4">加载中...</td></tr>';
+      try {
+        const res = await fetch('/api/documents');
+        const docs = await res.json();
+        if (!Array.isArray(docs) || docs.length === 0) {
+          docsBody.innerHTML = '<tr><td colspan="4">暂无文档，请先上传。</td></tr>';
+          docMetaEl.textContent = '暂无文档。';
+          docChunksEl.textContent = '暂无 chunk。';
+          return;
+        }
+
+        docsBody.innerHTML = '';
+        docs.forEach(doc => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="pill">${quote((doc.id || '').slice(0, 10))}</span></td>
+            <td>${quote(doc.filename)}</td>
+            <td class="${doc.parse_status !== 'parsed' ? 'warn' : ''}">${quote(doc.parse_status)}</td>
+            <td>${quote(doc.uploaded_at || '-')}</td>
+          `;
+          tr.addEventListener('click', () => selectDocument(doc.id));
+          docsBody.appendChild(tr);
+        });
+
+        const target = preferDocId || selectedDocId || docs[0].id;
+        await selectDocument(target);
+      } catch (err) {
+        docsBody.innerHTML = `<tr><td colspan="4">加载失败：${quote(String(err))}</td></tr>`;
+      }
+    }
+
+    async function selectDocument(docId) {
+      if (!docId) return;
+      selectedDocId = docId;
+      docMetaEl.textContent = '详情加载中...';
+      docChunksEl.textContent = 'chunk 加载中...';
+      try {
+        const [docRes, chunksRes] = await Promise.all([
+          fetch(`/api/documents/${docId}`),
+          fetch(`/api/documents/${docId}/chunks`)
+        ]);
+        const doc = await docRes.json();
+        const chunks = await chunksRes.json();
+
+        docMetaEl.innerHTML = `
+          <div><b>${quote(doc.filename)}</b> <span class="pill">${quote(doc.id)}</span></div>
+          <div>status: <code>${quote(doc.parse_status)}</code> | ext: <code>${quote(doc.file_ext)}</code></div>
+          <div>path: <code>${quote(doc.file_path)}</code></div>
+          <div>metadata:</div>
+          <pre class="mono">${quote(JSON.stringify(doc.metadata || {}, null, 2))}</pre>
+        `;
+
+        if (!Array.isArray(chunks) || chunks.length === 0) {
+          docChunksEl.textContent = '暂无 chunk（可能还未解析）。';
+          return;
+        }
+        const compact = chunks.slice(0, 40).map(c => ({
+          chunk_id: c.id,
+          section: c.section,
+          page: c.page,
+          text: String(c.text || '').slice(0, 220)
+        }));
+        docChunksEl.textContent = JSON.stringify({
+          chunk_count: chunks.length,
+          preview: compact
+        }, null, 2);
+      } catch (err) {
+        docMetaEl.textContent = `详情加载失败: ${String(err)}`;
+        docChunksEl.textContent = `chunk 加载失败: ${String(err)}`;
+      }
+    }
+
+    async function uploadDocument() {
+      const file = uploadFileEl.files?.[0];
+      if (!file) {
+        setStatus('请先选择文件。', true);
+        return;
+      }
+      setStatus('上传中...');
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/api/documents/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(`上传失败: ${JSON.stringify(data)}`, true);
+          return;
+        }
+        setStatus(`上传成功: doc_id=${data.doc_id}`);
+        await loadDocuments(data.doc_id);
+      } catch (err) {
+        setStatus(`上传异常: ${String(err)}`, true);
+      }
+    }
+
+    async function parseSelected() {
+      if (!selectedDocId) {
+        setStatus('请先选择文档。', true);
+        return;
+      }
+      const payload = {
+        chunk_size: Number(chunkSizeEl.value || 600),
+        chunk_overlap: Number(chunkOverlapEl.value || 120),
+      };
+      setStatus(`解析中: ${selectedDocId.slice(0, 8)}...`);
+      try {
+        const res = await fetch(`/api/documents/${selectedDocId}/parse`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(`解析失败: ${JSON.stringify(data)}`, true);
+          return;
+        }
+        setStatus(`解析完成: chunks=${data.chunks}`);
+        await loadDocuments(selectedDocId);
+      } catch (err) {
+        setStatus(`解析异常: ${String(err)}`, true);
+      }
+    }
+
+    async function triggerIndex(action) {
+      const endpoint = action === 'rebuild' ? '/api/index/rebuild' : '/api/index/build';
+      indexJobHintEl.textContent = '索引任务提交中...';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ run_async: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          indexJobHintEl.textContent = `失败: ${JSON.stringify(data)}`;
+          return;
+        }
+        const jobId = data.task_id;
+        indexJobHintEl.textContent = `已提交 ${action} 任务: ${jobId}`;
+        await pollIndexJob(jobId);
+      } catch (err) {
+        indexJobHintEl.textContent = `异常: ${String(err)}`;
+      }
+    }
+
+    async function pollIndexJob(jobId) {
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const res = await fetch(`/api/index/jobs/${jobId}`);
+        const data = await res.json();
+        if (['completed', 'failed', 'not_found'].includes(data.status)) {
+          if (data.status === 'completed') {
+            indexJobHintEl.textContent = `任务完成: indexed_chunks=${data.result?.indexed_chunks ?? '-'}, qdrant_mode=${data.result?.qdrant_mode ?? '-'}`;
+          } else {
+            indexJobHintEl.textContent = `任务结束: ${data.status}, error=${data.error || '-'}`;
+          }
+          return;
+        }
+        indexJobHintEl.textContent = `任务执行中: ${jobId.slice(0, 8)}..., status=${data.status}`;
+      }
+      indexJobHintEl.textContent = `任务轮询超时: ${jobId}`;
+    }
+
+    document.getElementById('uploadBtn').addEventListener('click', uploadDocument);
+    document.getElementById('refreshBtn').addEventListener('click', () => loadDocuments());
+    document.getElementById('parseBtn').addEventListener('click', parseSelected);
+    document.getElementById('buildIndexBtn').addEventListener('click', () => triggerIndex('build'));
+    document.getElementById('rebuildIndexBtn').addEventListener('click', () => triggerIndex('rebuild'));
+
+    loadDocuments();
+  </script>
+</body>
+</html>
