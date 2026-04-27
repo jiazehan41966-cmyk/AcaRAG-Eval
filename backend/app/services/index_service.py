@@ -17,6 +17,9 @@ class IndexService:
     def tokenize(self, text: str) -> list[str]:
         return embedding_service.tokenize(text)
 
+    def _load_index_payload(self) -> dict:
+        return state_store.load_index()
+
     def _build_bm25(self, chunk_payloads: dict[str, dict]) -> dict:
         inverted_index: dict[str, dict[str, int]] = defaultdict(dict)
         doc_freq: Counter[str] = Counter()
@@ -42,11 +45,8 @@ class IndexService:
             "b": 0.75,
         }
 
-    def _load_chunk_vectors(self) -> dict[str, dict]:
-        return state_store.load_index().get("chunk_vectors", {})
-
     def build_index(self, doc_ids: list[str] | None = None) -> dict:
-        existing = state_store.load_index()
+        existing = self._load_index_payload()
         chunk_vectors: dict[str, dict] = existing.get("chunk_vectors", {})
 
         selected_chunks = state_store.list_chunks(doc_ids)
@@ -114,8 +114,8 @@ class IndexService:
             state_store.save_index({"chunk_vectors": {}, "bm25": {}})
         return self.build_index(doc_ids=doc_ids)
 
-    def bm25_search(self, query: str, top_k: int = 5) -> list[dict]:
-        index = state_store.load_index()
+    def bm25_search(self, query: str, top_k: int = 5, index: dict | None = None) -> list[dict]:
+        index = index if index is not None else self._load_index_payload()
         bm25 = index.get("bm25") or {}
         chunk_vectors = index.get("chunk_vectors") or {}
         if not bm25 or not chunk_vectors:
@@ -151,8 +151,8 @@ class IndexService:
         ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return [self._to_hit(chunk_id, score, chunk_vectors[chunk_id]) for chunk_id, score in ranked]
 
-    def vector_search(self, query: str, top_k: int = 5) -> list[dict]:
-        index = state_store.load_index()
+    def vector_search(self, query: str, top_k: int = 5, index: dict | None = None) -> list[dict]:
+        index = index if index is not None else self._load_index_payload()
         chunk_vectors = index.get("chunk_vectors") or {}
         if not chunk_vectors:
             raise HTTPException(status_code=400, detail="Index is empty. Build index first.")
@@ -182,8 +182,9 @@ class IndexService:
         return [self._to_hit(chunk_id, score, payload) for chunk_id, score, payload in scores[:top_k]]
 
     def hybrid_search(self, query: str, top_k: int = 5, alpha: float = 0.6) -> list[dict]:
-        vector_hits = self.vector_search(query, top_k=max(top_k * 3, 10))
-        bm25_hits = self.bm25_search(query, top_k=max(top_k * 3, 10))
+        index = self._load_index_payload()
+        vector_hits = self.vector_search(query, top_k=max(top_k * 3, 10), index=index)
+        bm25_hits = self.bm25_search(query, top_k=max(top_k * 3, 10), index=index)
 
         vector_scores = {hit["chunk_id"]: hit["score"] for hit in vector_hits}
         bm25_scores = {hit["chunk_id"]: hit["score"] for hit in bm25_hits}
@@ -194,10 +195,10 @@ class IndexService:
         max_vector = max(vector_scores.values(), default=1.0) or 1.0
         max_bm25 = max(bm25_scores.values(), default=1.0) or 1.0
 
-        index = self._load_chunk_vectors()
+        chunk_vectors = index.get("chunk_vectors", {})
 
         for chunk_id in all_chunk_ids:
-            if chunk_id not in index:
+            if chunk_id not in chunk_vectors:
                 continue
             v = vector_scores.get(chunk_id, 0.0) / max_vector
             b = bm25_scores.get(chunk_id, 0.0) / max_bm25
@@ -205,7 +206,7 @@ class IndexService:
             merged.append((chunk_id, merged_score))
 
         merged.sort(key=lambda x: x[1], reverse=True)
-        return [self._to_hit(chunk_id, score, index[chunk_id]) for chunk_id, score in merged[:top_k]]
+        return [self._to_hit(chunk_id, score, chunk_vectors[chunk_id]) for chunk_id, score in merged[:top_k]]
 
     def rerank(self, query: str, candidates: list[str], top_k: int = 5) -> list[dict]:
         return bge_model_service.rerank(query=query, documents=candidates, top_k=top_k)
