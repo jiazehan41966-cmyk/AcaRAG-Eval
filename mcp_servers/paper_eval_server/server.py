@@ -13,6 +13,7 @@ from typing import Any
 
 from fastmcp import Client, FastMCP
 
+from mcp_servers.paper_eval_server.tools.get_citation_info import get_citation_info as get_citation_info_impl
 from mcp_servers.paper_eval_server.tools.get_metadata import get_paper_metadata as get_paper_metadata_impl
 from mcp_servers.paper_eval_server.tools.query_eval_report import query_eval_report as query_eval_report_impl
 from mcp_servers.paper_eval_server.tools.query_failure_cases import query_failure_cases as query_failure_cases_impl
@@ -56,6 +57,13 @@ def create_server() -> FastMCP:
     )
     def query_failure_cases(failure_type: str, threshold: float = 0.0) -> list[dict]:
         return query_failure_cases_impl(failure_type=failure_type, threshold=threshold)
+
+    @server.tool(
+        name="get_citation_info",
+        description="Get citation relationships and context for a paper by paper_id/doc_id.",
+    )
+    def get_citation_info(paper_id: str) -> list[dict]:
+        return get_citation_info_impl(paper_id=paper_id)
 
     return server
 

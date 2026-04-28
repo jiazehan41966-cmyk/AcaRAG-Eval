@@ -3,5 +3,9 @@
   "citation_error_min_accuracy": 0.5,
   "retrieval_miss_min_context_recall": 0.35,
   "rerank_error_min_avg_score": 0.18,
+  "retrieval_noise_max_precision": 0.2,
+  "incomplete_answer_max_relevancy": 0.25,
+  "latency_limit_ms": 30000,
+  "token_limit": 8000,
   "missing_reference_default_score": 1.0
 }

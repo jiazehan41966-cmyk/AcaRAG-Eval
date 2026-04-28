@@ -88,6 +88,7 @@ class QdrantService:
         return None
 
     def ensure_collection(self, vector_size: int) -> None:
+        _ = self.client
         if not self.collection_exists():
             self.client.create_collection(
                 collection_name=self.collection_name,
@@ -100,13 +101,18 @@ class QdrantService:
             return
 
         if existing_size != vector_size:
-            self.client.delete_collection(collection_name=self.collection_name)
+            if self._mode == "local":
+                self._reset_local_client()
+            if self.collection_exists():
+                self.client.delete_collection(collection_name=self.collection_name)
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
             )
+            return
 
     def clear_collection(self, vector_size: int) -> None:
+        _ = self.client
         if self._mode == "local":
             self._reset_local_client()
 
@@ -152,6 +158,8 @@ class QdrantService:
             vector_size = len(vectors[0]) if vectors else 0
             if vector_size <= 0:
                 raise
+            if self._mode == "local":
+                self._reset_local_client()
             self.clear_collection(vector_size=vector_size)
             self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
 

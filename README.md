@@ -210,6 +210,7 @@ python scripts/check_regression_gate.py --latest
 
 ```bash
 python scripts/run_real_acceptance.py --run-name real_acceptance --max-cases 20
+python scripts/run_real_acceptance.py --run-name real_pdf_acceptance --golden-set data/golden_set/pdf_golden_set.jsonl --max-cases 20
 ```
 
 产物：
@@ -219,7 +220,23 @@ python scripts/run_real_acceptance.py --run-name real_acceptance --max-cases 20
 
 说明：脚本会在缺少 OPENAI/Langfuse 关键配置时返回非零退出码，并在报告中标记阻塞原因。
 
-## 7) Graph route ablation
+## 7) Real PDF dataset and citation-grounded Golden Set
+
+```bash
+python scripts/seed_real_papers.py --max-papers 5
+python scripts/generate_pdf_golden_set.py --max-cases 80 --output data/golden_set/pdf_golden_set.jsonl
+python scripts/validate_golden_set_references.py --input data/golden_set/pdf_golden_set.jsonl --fail-on-placeholder
+python - <<'PY'
+import sys, json
+sys.path.insert(0, 'backend')
+from app.services.index_service import index_service
+print(json.dumps(index_service.rebuild_index(), ensure_ascii=False, indent=2))
+PY
+```
+
+`pdf_golden_set.jsonl` is generated from parsed PDF chunks, so every case contains real `supporting_evidence` chunk IDs and real `expected_citation` values in `{doc_id}:{page}` format.
+
+## 8) Graph route ablation
 
 ```bash
 python scripts/generate_graph_eval_set.py
@@ -233,7 +250,20 @@ python scripts/run_graph_ablation.py --max-cases 32
 - `data/eval_reports/graph_route_validation_*.md`
 - `data/eval_reports/graph_ablation_*_vs_*.md`
 
-## 8) CI
+## 9) Next.js dashboard
+
+```bash
+cd frontend/next-dashboard
+npm install
+NEXT_PUBLIC_API_BASE=http://localhost:8000 npm run dev
+```
+
+Pages:
+
+- `/` dashboard for documents, recent runs, and top-line metrics.
+- `/evaluation-set` local JSONL inspection and lightweight eval trigger.
+
+## 10) CI
 
 工作流：`.github/workflows/ci.yml`
 
@@ -244,7 +274,7 @@ python scripts/run_graph_ablation.py --max-cases 32
 - `python scripts/check_regression_gate.py --latest`（指标回归门禁）
 - 可选：`CI_REAL_ACCEPTANCE=true` 时执行 `scripts/run_real_acceptance.py` 作为真实环境强门禁
 
-## 9) 常见故障排查
+## 11) 常见故障排查
 
 ### Q1: DeepEval 显示 skipped / OPENAI_API_KEY missing
 

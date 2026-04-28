@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from hashlib import sha1
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -285,6 +287,51 @@ if SQLALCHEMY_AVAILABLE:
         updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+    class PaperEntity(Base):
+        __tablename__ = "papers"
+
+        id: Mapped[str] = mapped_column(String(64), primary_key=True)
+        title: Mapped[str | None] = mapped_column(Text, nullable=True)
+        authors: Mapped[str | None] = mapped_column(Text, nullable=True)
+        year: Mapped[str | None] = mapped_column(String(16), nullable=True)
+        venue: Mapped[str | None] = mapped_column(Text, nullable=True)
+        abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
+        payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+        updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+    class KnowledgeEntity(Base):
+        __tablename__ = "entities"
+
+        id: Mapped[str] = mapped_column(String(96), primary_key=True)
+        paper_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+        name: Mapped[str] = mapped_column(String(256), index=True, nullable=False)
+        type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+        payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+    class KnowledgeRelation(Base):
+        __tablename__ = "relations"
+
+        id: Mapped[str] = mapped_column(String(128), primary_key=True)
+        source_entity: Mapped[str] = mapped_column(String(96), index=True, nullable=False)
+        target_entity: Mapped[str] = mapped_column(String(96), index=True, nullable=False)
+        relation_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+        evidence_chunk_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+        payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+    class CitationEntity(Base):
+        __tablename__ = "citations"
+
+        id: Mapped[str] = mapped_column(String(128), primary_key=True)
+        paper_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+        cited_paper_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+        context: Mapped[str] = mapped_column(Text, nullable=False)
+        evidence_chunk_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+        payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
 class SQLStateStore:
     def __init__(self, database_url: str) -> None:
         if not SQLALCHEMY_AVAILABLE:
@@ -312,6 +359,156 @@ class SQLStateStore:
     def _now() -> datetime:
         return datetime.now(timezone.utc)
 
+    @staticmethod
+    def _stable_id(*parts: str, length: int = 40) -> str:
+        raw = "|".join(parts)
+        return sha1(raw.encode("utf-8")).hexdigest()[:length]
+
+    @staticmethod
+    def _entity_type(name: str) -> str:
+        lowered = name.lower()
+        if any(marker in lowered for marker in ("bert", "gpt", "t5", "llama", "transformer")):
+            return "model"
+        if any(marker in lowered for marker in ("dataset", "corpus", "squad", "nq", "msmarco", "wiki")):
+            return "dataset"
+        if any(marker in lowered for marker in ("accuracy", "f1", "recall", "precision", "bleu", "rouge", "mrr")):
+            return "metric"
+        if any(marker in lowered for marker in ("retrieval", "rerank", "rag", "graph", "method")):
+            return "method"
+        return "concept"
+
+    @staticmethod
+    def _infer_relation_type(text: str, source_name: str, target_name: str, source_type: str, target_type: str) -> str:
+        """Infer semantic relation type from surrounding text and entity types."""
+        lowered = text.lower()
+        uses_markers = ("使用", "采用", "利用", "based on", "utilize", "employ", "leverage", "using", "apply", "adopted")
+        improves_markers = ("改进", "优化", "提升", "outperform", "improve", "enhance", "surpass", "better than", "superior")
+        compares_markers = ("对比", "比较", "compare", "versus", " vs ", "contrast", "相比", "不同")
+        evaluates_markers = ("evaluate", "测试", "实验", "benchmark", "test on", "evaluated on", "在.*上测试")
+
+        if any(m in lowered for m in improves_markers):
+            return "improves"
+        if any(m in lowered for m in compares_markers):
+            return "compares"
+        if source_type in ("method", "model") and target_type in ("dataset", "metric"):
+            if any(m in lowered for m in evaluates_markers):
+                return "evaluates_on"
+        if any(m in lowered for m in uses_markers):
+            return "uses"
+        return "co_occurs"
+
+    @staticmethod
+    def _citation_mentions(text: str) -> list[str]:
+        bracket_refs = re.findall(r"\[(\d+(?:,\s*\d+)*)\]", text)
+        author_year = re.findall(r"\b([A-Z][A-Za-z]+(?:\s+et al\.)?,\s*(?:19|20)\d{2})\b", text)
+        mentions: list[str] = []
+        for ref in bracket_refs:
+            mentions.extend(item.strip() for item in ref.split(",") if item.strip())
+        mentions.extend(author_year)
+        return mentions[:12]
+
+    @staticmethod
+    def _extract_abstract(chunks: list[ChunkRecord]) -> str | None:
+        for chunk in chunks[:12]:
+            text = chunk.text.strip()
+            if "abstract" in (chunk.section or "").lower() or text.lower().startswith("abstract"):
+                return text[:2000]
+        return chunks[0].text[:1000] if chunks else None
+
+    def _upsert_paper(self, db: Session, document: DocumentRecord, chunks: list[ChunkRecord] | None = None) -> None:
+        metadata = document.metadata or {}
+        year_match = re.search(r"\b(19|20)\d{2}\b", str(metadata.get("year") or metadata.get("title") or ""))
+        row = db.get(PaperEntity, document.id) or PaperEntity(
+            id=document.id,
+            payload=document.model_dump(mode="json"),
+            updated_at=self._now(),
+        )
+        row.title = metadata.get("title") or document.filename
+        row.authors = str(metadata.get("authors") or "")
+        row.year = metadata.get("year") or (year_match.group(0) if year_match else None)
+        row.venue = metadata.get("venue")
+        row.abstract = metadata.get("abstract") or self._extract_abstract(chunks or [])
+        row.payload = document.model_dump(mode="json")
+        row.updated_at = self._now()
+        db.add(row)
+
+    def _replace_structured_knowledge(self, db: Session, doc_id: str, chunks: list[ChunkRecord]) -> None:
+        from app.services.graph_service import graph_service
+
+        existing_entities = db.execute(select(KnowledgeEntity).where(KnowledgeEntity.paper_id == doc_id)).scalars().all()
+        existing_entity_ids = [item.id for item in existing_entities]
+        if existing_entity_ids:
+            db.execute(delete(KnowledgeRelation).where(KnowledgeRelation.source_entity.in_(existing_entity_ids)))
+            db.execute(delete(KnowledgeRelation).where(KnowledgeRelation.target_entity.in_(existing_entity_ids)))
+        db.execute(delete(KnowledgeEntity).where(KnowledgeEntity.paper_id == doc_id))
+        db.execute(delete(CitationEntity).where(CitationEntity.paper_id == doc_id))
+
+        seen_entities: set[str] = set()
+        seen_relations: set[str] = set()
+        seen_citations: set[str] = set()
+
+        for chunk in chunks:
+            smart_entities = graph_service.extract_entities_smart(chunk.text, max_entities=8)
+            names = [e["name"] for e in smart_entities]
+            types = [e["type"] for e in smart_entities]
+            entity_ids: list[str] = []
+            for name, etype in zip(names, types):
+                entity_id = self._stable_id(doc_id, name, length=32)
+                entity_ids.append(entity_id)
+                if entity_id in seen_entities:
+                    continue
+                seen_entities.add(entity_id)
+                db.add(
+                    KnowledgeEntity(
+                        id=entity_id,
+                        paper_id=doc_id,
+                        name=name,
+                        type=etype,
+                        payload={"evidence_chunk_id": chunk.id, "page": chunk.page, "section": chunk.section},
+                    )
+                )
+
+            entity_types_map: dict[str, str] = {}
+            for eid, etype in zip(entity_ids, types):
+                entity_types_map[eid] = etype
+
+            for source, target in zip(entity_ids, entity_ids[1:]):
+                relation_id = self._stable_id(doc_id, chunk.id, source, target, length=40)
+                if relation_id in seen_relations:
+                    continue
+                seen_relations.add(relation_id)
+                src_type = entity_types_map.get(source, "concept")
+                tgt_type = entity_types_map.get(target, "concept")
+                src_name = names[entity_ids.index(source)] if source in entity_ids else ""
+                tgt_name = names[entity_ids.index(target)] if target in entity_ids else ""
+                rel_type = self._infer_relation_type(chunk.text, src_name, tgt_name, src_type, tgt_type)
+                db.add(
+                    KnowledgeRelation(
+                        id=relation_id,
+                        source_entity=source,
+                        target_entity=target,
+                        relation_type=rel_type,
+                        evidence_chunk_id=chunk.id,
+                        payload={"page": chunk.page, "section": chunk.section, "relation_type": rel_type},
+                    )
+                )
+
+            for mention in self._citation_mentions(chunk.text):
+                citation_id = self._stable_id(doc_id, chunk.id, mention, length=40)
+                if citation_id in seen_citations:
+                    continue
+                seen_citations.add(citation_id)
+                db.add(
+                    CitationEntity(
+                        id=citation_id,
+                        paper_id=doc_id,
+                        cited_paper_id=mention,
+                        context=chunk.text[:1000],
+                        evidence_chunk_id=chunk.id,
+                        payload={"page": chunk.page, "section": chunk.section},
+                    )
+                )
+
     def save_document(self, document: DocumentRecord) -> None:
         with self._lock, self.session() as db:
             row = db.get(DocumentEntity, document.id) or DocumentEntity(
@@ -322,6 +519,7 @@ class SQLStateStore:
             row.payload = document.model_dump(mode="json")
             row.updated_at = self._now()
             db.add(row)
+            self._upsert_paper(db, document)
         self._mirror.save_document(document)
 
     def get_document(self, doc_id: str) -> DocumentRecord | None:
@@ -347,6 +545,10 @@ class SQLStateStore:
                         payload=chunk.model_dump(mode="json"),
                     )
                 )
+            document = db.get(DocumentEntity, doc_id)
+            if document is not None:
+                self._upsert_paper(db, DocumentRecord.model_validate(document.payload), chunks)
+            self._replace_structured_knowledge(db, doc_id, chunks)
         self._mirror.save_chunks(doc_id, chunks)
 
     def get_chunks(self, doc_id: str) -> list[ChunkRecord]:

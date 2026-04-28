@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -404,6 +404,54 @@ class LLMService:
             "source": "llm",
         }
         return result, meta
+
+    def extract_entities_structured(self, text: str, max_entities: int = 10) -> list[dict[str, str]] | None:
+        """Use LLM structured output to extract typed entities from academic text.
+
+        Returns a list of {"name": ..., "type": ...} dicts, or None if LLM unavailable.
+        Types: method, dataset, metric, model, concept.
+        """
+        if not self.is_enabled():
+            return None
+
+        system_prompt = (
+            "You are an academic NLP entity extractor. Given a passage from a research paper, "
+            "extract the most important named entities. For each entity, classify its type as one of: "
+            "method, dataset, metric, model, concept.\n\n"
+            "Return a JSON array of objects with keys 'name' and 'type'. "
+            f"Return at most {max_entities} entities. Example:\n"
+            '[{"name": "BERT", "type": "model"}, {"name": "SQuAD", "type": "dataset"}]'
+        )
+        result = self._chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text[:2000]},
+            ],
+            max_tokens=512,
+            temperature=0.0,
+        )
+        if not result:
+            return None
+
+        parsed = self._extract_json_block(result.get("content", ""))
+        if not isinstance(parsed, list):
+            return None
+
+        valid_types = {"method", "dataset", "metric", "model", "concept"}
+        entities: list[dict[str, str]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            etype = str(item.get("type", "concept")).strip().lower()
+            if not name or len(name) < 2:
+                continue
+            if etype not in valid_types:
+                etype = "concept"
+            entities.append({"name": name, "type": etype})
+            if len(entities) >= max_entities:
+                break
+        return entities if entities else None
 
     def health(self) -> dict[str, Any]:
         return {

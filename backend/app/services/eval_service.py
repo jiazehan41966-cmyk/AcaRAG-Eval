@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from collections import defaultdict
@@ -111,6 +111,12 @@ class EvalService:
             hit_count = int(retrieve_step.get("hit_count", len(citations)) if retrieve_step else len(citations))
             avg_rerank = float(grade_step.get("avg_rerank_score", 0.0) if grade_step else 0.0)
 
+            mcp_step = self._find_step(trace.get("steps", []), "call_mcp_tool")
+            used_mcp = mcp_step is not None and bool(mcp_step)
+            mcp_ok = bool(mcp_step.get("ok", True)) if mcp_step else True
+            latency_ms = float(trace.get("latency_ms", 0) or 0)
+            total_tokens = int(trace.get("total_tokens", 0) or 0)
+
             failure_type, failure_score = self._attribute_failure(
                 faithfulness=faithfulness,
                 citation_accuracy=citation_accuracy,
@@ -118,6 +124,11 @@ class EvalService:
                 hit_count=hit_count,
                 avg_rerank_score=avg_rerank,
                 has_expected_citations=bool(expected_citations),
+                answer_relevancy=answer_relevancy,
+                latency_ms=latency_ms,
+                token_count=total_tokens,
+                used_mcp_tool=used_mcp,
+                mcp_tool_ok=mcp_ok,
             )
 
             row = {
@@ -334,12 +345,31 @@ class EvalService:
         hit_count: int,
         avg_rerank_score: float,
         has_expected_citations: bool,
+        answer_relevancy: float = 1.0,
+        latency_ms: float = 0.0,
+        token_count: int = 0,
+        used_mcp_tool: bool = False,
+        mcp_tool_ok: bool = True,
     ) -> tuple[str, float]:
         thresholds = failure_threshold_service.load()
         unsupported_claim_max_faithfulness = float(thresholds.get("unsupported_claim_max_faithfulness", 0.45))
         citation_error_min_accuracy = float(thresholds.get("citation_error_min_accuracy", 0.5))
         retrieval_miss_min_context_recall = float(thresholds.get("retrieval_miss_min_context_recall", 0.35))
         rerank_error_min_avg_score = float(thresholds.get("rerank_error_min_avg_score", 0.18))
+        retrieval_noise_max_precision = float(thresholds.get("retrieval_noise_max_precision", 0.2))
+        incomplete_answer_max_relevancy = float(thresholds.get("incomplete_answer_max_relevancy", 0.25))
+        latency_limit_ms = float(thresholds.get("latency_limit_ms", 30000))
+        token_limit = int(thresholds.get("token_limit", 8000))
+
+        # tool_call_error: MCP tool was invoked but failed
+        if used_mcp_tool and not mcp_tool_ok:
+            return "tool_call_error", 1.0
+
+        # timeout_or_cost_high: response too slow or too many tokens
+        if latency_ms > latency_limit_ms:
+            return "timeout_or_cost_high", latency_ms - latency_limit_ms
+        if token_count > token_limit:
+            return "timeout_or_cost_high", float(token_count - token_limit)
 
         if faithfulness < unsupported_claim_max_faithfulness:
             return "unsupported_claim", unsupported_claim_max_faithfulness - faithfulness
@@ -347,12 +377,20 @@ class EvalService:
         if has_expected_citations and citation_accuracy < citation_error_min_accuracy:
             return "citation_error", citation_error_min_accuracy - citation_accuracy
 
+        # incomplete_answer: answer doesn't address the question
+        if answer_relevancy < incomplete_answer_max_relevancy:
+            return "incomplete_answer", incomplete_answer_max_relevancy - answer_relevancy
+
         if context_recall < retrieval_miss_min_context_recall:
             if hit_count == 0:
                 return "retrieval_miss", retrieval_miss_min_context_recall - context_recall
             if avg_rerank_score < rerank_error_min_avg_score:
                 return "rerank_error", rerank_error_min_avg_score - avg_rerank_score
             return "retrieval_miss", retrieval_miss_min_context_recall - context_recall
+
+        # retrieval_noise: many hits but mostly irrelevant
+        if hit_count > 0 and avg_rerank_score < retrieval_noise_max_precision and context_recall >= retrieval_miss_min_context_recall:
+            return "retrieval_noise", retrieval_noise_max_precision - avg_rerank_score
 
         if hit_count > 0 and avg_rerank_score < rerank_error_min_avg_score:
             return "rerank_error", rerank_error_min_avg_score - avg_rerank_score
@@ -363,9 +401,13 @@ class EvalService:
         summary = {
             "none": 0,
             "retrieval_miss": 0,
+            "retrieval_noise": 0,
             "rerank_error": 0,
             "citation_error": 0,
             "unsupported_claim": 0,
+            "incomplete_answer": 0,
+            "tool_call_error": 0,
+            "timeout_or_cost_high": 0,
         }
         for row in case_results:
             key = row.get("failure_type", "none")

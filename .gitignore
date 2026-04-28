@@ -1,9 +1,11 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .venv/
 venv/
+node_modules/
+.next/
 .env
 .idea/
 .vscode/
@@ -25,3 +27,6 @@ data/eval_reports/*
 !data/index/.gitkeep
 !data/state/.gitkeep
 !data/eval_reports/.gitkeep
+
+# Ignore skills
+.skills/

@@ -125,5 +125,36 @@ class GraphService:
         hits.sort(key=lambda x: x.get("score", 0.0), reverse=True)
         return hits[:top_k]
 
+    def extract_entities_smart(self, text: str, max_entities: int = 12) -> list[dict[str, str]]:
+        """Extract entities with type info. Uses LLM when available, heuristic otherwise.
+
+        Returns list of {"name": ..., "type": ...} dicts.
+        """
+        try:
+            from app.services.llm_service import llm_service
+
+            llm_result = llm_service.extract_entities_structured(text, max_entities=max_entities)
+            if llm_result:
+                return llm_result
+        except Exception:
+            pass
+
+        # Fallback: heuristic extraction with keyword-based type inference
+        names = self.extract_entities(text, max_entities=max_entities)
+        return [{"name": name, "type": self._heuristic_entity_type(name)} for name in names]
+
+    @staticmethod
+    def _heuristic_entity_type(name: str) -> str:
+        lowered = name.lower()
+        if any(m in lowered for m in ("bert", "gpt", "t5", "llama", "transformer", "roberta", "electra")):
+            return "model"
+        if any(m in lowered for m in ("dataset", "corpus", "squad", "nq", "msmarco", "wiki", "benchmark")):
+            return "dataset"
+        if any(m in lowered for m in ("accuracy", "f1", "recall", "precision", "bleu", "rouge", "mrr", "ndcg")):
+            return "metric"
+        if any(m in lowered for m in ("retrieval", "rerank", "rag", "graph", "attention", "embedding")):
+            return "method"
+        return "concept"
+
 
 graph_service = GraphService()
